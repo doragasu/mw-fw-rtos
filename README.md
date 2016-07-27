@@ -22,6 +22,9 @@ The recommended way of burning the firmware to the ESP8266 embedded on a MegaWiF
 $ make cart
 ```
 
+# Status
+This is work in progress. Right now only a very limited amount of commands are working. Please be patient, and if you have the will and the skills, contribute!
+
 # Authors
 This program has been written by doragasu.
 
