@@ -2,7 +2,9 @@
 Firmare for the ESP8266 WiFi module installed in MegaWiFi cartridges. This firmware talks directly to the MegaWiFi API (mw-api) running on the Genesis/MegaDrive console, allowing it to connect to WiFi access points, and to send and receive data through The Internet using standard TCP and UDP protocols. There are some additional goodies provided by the firmware, like flash read/write functions and SNTP time synchronization.
 
 # Building
-Although building the firmware on Windows might be possible, Windows build environments are not supported. A GNU/Linux machine is recommended. This firmware uses [esp-open-rtos](https://github.com/SuperHouse/esp-open-rtos) framework. To build it first install `esp-open-rtos` and make sure the complete toolchain is working (e.g. by building the provided examples). Then edit the following lines of the `Makefile'
+Although building the firmware on Windows might be possible, Windows build environments are not supported. A GNU/Linux machine is recommended. This firmware uses [esp-open-rtos](https://github.com/SuperHouse/esp-open-rtos) framework, but as the original project (as of today) lacks the ability to switch the UART used for debugging, you will have to use [my fork (branch `devel-uart-sel`)](https://github.com/doragasu/esp-open-rtos/tree/devel-uart-sel).
+
+So first clone my `esp-open-rtos` repository fork, switch to branch `devel-uart-sel` and follow the instructions to install the complete toolchain. Make sure it is working (e.g. by building the provided examples). Then edit the following lines of the `Makefile'
 ```
 MDMAP ?= $(HOME)/src/github/mw-mdma-cli/mdma -w
 
