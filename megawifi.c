@@ -59,6 +59,24 @@ typedef enum {
 } MwSockStat;
 /** \} */
 
+/// Commands allowed while in IDLE state
+const static uint8_t MwIdleCmds[] = {
+	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
+	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
+	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
+	MW_CMD_FLASH_READ
+};
+
+/// Commands allowed while in READY state
+const static uint8_t MwReadyCmds[] = {
+	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
+	MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_LEAVE, MW_CMD_TCP_CON,
+	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_STAT, MW_CMD_TCP_DISC,
+	MW_CMD_UDP_SET, MW_CMD_UDP_STAT, MW_CMD_UDP_CLR, MW_CMD_PING,
+	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
+	MW_CMD_FLASH_READ
+};
+
 /*
  * PRIVATE PROTOTYPES
  */
@@ -233,6 +251,15 @@ void MwFsmCloseAll(void) {
 			MwFsmTcpDis(i + 1);
 		}
 	}
+}
+
+/// Check if a command is on a list
+inline uint8_t MwCmdInList(uint8_t cmd, const uint8_t *list,
+		                   uint8_t listLen) {
+	uint8_t i;
+
+	for (i = 0; (i < listLen) && (list[i] != cmd); i++);
+	return !(i == listLen);
 }
 
 /************************************************************************//**
@@ -457,7 +484,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 			// If using channel 0, process command. Else forward message
 			// to the appropiate socket.
 			if (MW_CTRL_CH == b->ch) {
-				// TODO: Error handling
+				// Check command is allowed on READY state
 				MwFsmCmdProc((MwCmd*)b, b->len);
 			} else {
 				// Forward message if channel is enabled.
@@ -544,6 +571,7 @@ static void MwFsm(MwFsmMsg *msg) {
 	uint16_t tmp;
 	struct sdk_bss_info *bss;
 	uint8_t scratch[4];
+	MwMsgBuf *b = msg->d;
 
 	switch (d.s) {
 		case MW_ST_INIT:
@@ -569,7 +597,14 @@ static void MwFsm(MwFsmMsg *msg) {
 		case MW_ST_IDLE:
 			// IDLE state is abandoned once connected to an AP
 			if (MW_EV_SER_RX == msg->e) {
-				// TODO Parse commands on channel 0 only
+				// Parse commands on channel 0 only
+				dprintf("Serial recvd %d bytes.\n", b->len);
+				if (MW_CTRL_CH == b->ch) {
+					// Check command is allowed on IDLE state
+					MwFsmCmdProc((MwCmd*)b, b->len);
+				} else {
+					dprintf("IDLE received data on non ctrl channel!\n");
+				}
 			} else if (MW_EV_WIFI == msg->e) {
 				if (STATION_GOT_IP ==  (uint32_t)msg->d) {
 					d.s = MW_ST_READY;

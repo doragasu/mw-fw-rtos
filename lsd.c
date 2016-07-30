@@ -263,10 +263,12 @@ void LsdRecvTsk(void *pvParameters) {
 							if (RXB.ch >= LSD_MAX_CH) d.rxs = LSD_ST_STX_WAIT;
 							// Check channel is enabled
 							else if (d.en[RXB.ch]) {
-								dprintf("Recv data on not enabled channel!\n");
 								d.rxs = LSD_ST_LEN_RECV;
 							}
-							else d.rxs = LSD_ST_STX_WAIT;
+							else {
+								d.rxs = LSD_ST_STX_WAIT;
+								dprintf("Recv data on not enabled channel!\n");
+							}
 						}
 						break;
 	

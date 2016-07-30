@@ -105,7 +105,6 @@
 #define MW_CMD_FLASH_WRITE	 22
 #define MW_CMD_FLASH_READ	 23
 #define MW_CMD_ERROR		255
-
 /** \} */
 
 /** \addtogroup MwApi ApCfg Configuration needed to connect to an AP
