@@ -235,6 +235,9 @@ void MwFsmCloseAll(void) {
 	}
 }
 
+void MwApCfg(void) {
+}
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/

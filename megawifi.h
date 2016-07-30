@@ -17,10 +17,6 @@
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 
-/// Maximum SSID length (including '\0').
-#define MW_SSID_MAXLEN		32
-/// Maximum password length (including '\0').
-#define MW_PASS_MAXLEN		64
 /// Maximum length of an NTP pool URI (including '\0').
 #define MW_NTP_POOL_MAXLEN	80
 /// Number of AP configurations stored to nvflash.
@@ -125,9 +121,11 @@ typedef struct {
 	// If datalen is nonzero, additional command data goes here until
 	// filling datalen bytes.
 	union {
+		uint8_t ch;		// Channel number for channel related requests
 		uint8_t data[MW_MSG_MAX_BUFLEN];// Might need adjusting data length!
 		MwMsgInAddr inAddr;
-		uint8_t ch;		// Channel number for channel related requests
+		MwMsgApCfg apCfg;
+		MwMsgIpCfg ipCfg;
 	};
 } MwCmd;
 /** \} */
