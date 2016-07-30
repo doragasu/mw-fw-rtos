@@ -1,6 +1,8 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
+#include <stdint.h>
+
 #ifndef TRUE
 #define TRUE 1
 #endif
@@ -15,7 +17,21 @@
 /// Remove compiler warnings when not using a function parameter
 #define UNUSED_PARAM(x)		(void)x
 
+/// Swaps bytes from a word (16 bits)
 #define ByteSwapWord(w)		(uint16_t)((((uint16_t)(w))>>8) | (((uint16_t)(w))<<8))
+
+/// Swaps bytes from a dword (32 bits)
+#define ByteSwapDWord(dw)	(uint32_t)((((uint32_t)(dw))>>24) |               \
+		((((uint32_t)(dw))>>8) & 0xFF00) | ((((uint32_t)(dw)) & 0xFF00)<<8) | \
+	  	(((uint32_t)(dw))<<24))
+
+/// Swaps bytes from a qword (64 bits)
+#define ByteSwapQWord(qw)	(uint64_t)((((uint64_t)(qw))>>56) |                \
+	((((uint64_t)(dw))>>40) & 0xFF00) | ((((uint64_t)(qw))>>24) & 0xFF0000) | \
+    ((((uint64_t)(dw))>>8) & 0xFF000000) |                                    \
+    ((((uint64_t)(qw)) & 0xFF000000)<<8) |                                    \
+    ((((uint64_t)(qw)) & 0xFF0000)<<24)  |                                    \
+    ((((uint64_t)(qw)) & 0xFF00)<< 40)   | (((uint64_t)(qw))<<56))
 
 /// Puts a task to sleep for some milliseconds (requires FreeRTOS).
 #define vTaskDelayMs(ms)	vTaskDelay((ms)/portTICK_RATE_MS)

@@ -262,6 +262,9 @@ inline uint8_t MwCmdInList(uint8_t cmd, const uint8_t *list,
 	return !(i == listLen);
 }
 
+void MwApCfg(void) {
+}
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/

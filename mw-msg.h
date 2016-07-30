@@ -11,6 +11,12 @@
 #define _MW_MSG_H_
 
 #include <stdint.h>
+#include <lwip/ip_addr.h>
+
+/// Maximum SSID length (including '\0').
+#define MW_SSID_MAXLEN		32
+/// Maximum password length (including '\0').
+#define MW_PASS_MAXLEN		64
 
 /** \addtogroup MwApi MwEvent Events parsed by the system FSM.
  *  \{ */
@@ -42,12 +48,29 @@ typedef struct {
 	uint8_t ch;							///< Channel associated with buffer
 } MwMsgBuf;
 
+/// TCP/UDP address message
 typedef struct {
 	char dst_port[6];
 	char src_port[6];
 	uint8_t channel;
-	char data[MW_MSG_MAX_BUFLEN];
+	char data[MW_MSG_MAX_BUFLEN - 6 - 6 - 1];
 } MwMsgInAddr;
+
+/// AP configuration message
+typedef struct {
+	uint8_t cfgNum;
+	char ssid[MW_SSID_MAXLEN];
+	char pass[MW_PASS_MAXLEN];
+} MwMsgApCfg;
+
+/// IP configuration message
+typedef struct {
+	uint8_t cfgNum;
+	uint8_t reserved[3];
+	struct ip_info cfg;
+	struct ip_addr dns1;
+	struct ip_addr dns2;
+} MwMsgIpCfg;
 
 /** \addtogroup MwApi MwFsmMsg Message parsed by the FSM
  *  \{ */
