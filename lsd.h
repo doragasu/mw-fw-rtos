@@ -6,8 +6,6 @@
  * \author Jesus Alonso (doragasu)
  * \date   2016
  * \todo   Implement UART RTS/CTS handshaking.
- * \todo   Currently LsdSend() blocks polling the UART Fifo. An implemen-
- *         tation using interrupts/DMA should be in the high priority list.
  * \todo   Proper implementation of error handling.
  * \defgroup lsd Local Symmetric Data-link
  * \{

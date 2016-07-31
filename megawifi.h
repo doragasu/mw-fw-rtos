@@ -112,23 +112,6 @@ typedef struct {
 
 /** \} */
 
-/** \addtogroup MwApi MwCmd Command sent to system FSM
- *  \{ */
-typedef struct {
-	uint16_t cmd;		///< Command code
-	uint16_t datalen;	///< Data length
-	// If datalen is nonzero, additional command data goes here until
-	// filling datalen bytes.
-	union {
-		uint8_t ch;		// Channel number for channel related requests
-		uint8_t data[MW_MSG_MAX_BUFLEN];// Might need adjusting data length!
-		MwMsgInAddr inAddr;
-		MwMsgApCfg apCfg;
-		MwMsgIpCfg ipCfg;
-	};
-} MwCmd;
-/** \} */
-
 /// Length of a command header (command and datalen fields)
 #define MW_CMD_HEADLEN	(2 * sizeof(uint16_t))
 

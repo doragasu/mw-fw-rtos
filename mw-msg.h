@@ -42,18 +42,14 @@ typedef enum {
 /// Maximum buffer length (bytes)
 #define MW_MSG_MAX_BUFLEN	512
 
-typedef struct {
-	uint8_t data[MW_MSG_MAX_BUFLEN];	///< Buffer data
-	uint16_t len;						///< Length of buffer contents
-	uint8_t ch;							///< Channel associated with buffer
-} MwMsgBuf;
+#define MW_CMD_MAX_BUFLEN	(MW_MSG_MAX_BUFLEN - 4)
 
 /// TCP/UDP address message
 typedef struct {
 	char dst_port[6];
 	char src_port[6];
 	uint8_t channel;
-	char data[MW_MSG_MAX_BUFLEN - 6 - 6 - 1];
+	char data[MW_CMD_MAX_BUFLEN - 6 - 6 - 1];
 } MwMsgInAddr;
 
 /// AP configuration message
@@ -71,6 +67,32 @@ typedef struct {
 	struct ip_addr dns1;
 	struct ip_addr dns2;
 } MwMsgIpCfg;
+
+/** \addtogroup MwApi MwCmd Command sent to system FSM
+ *  \{ */
+typedef struct {
+	uint16_t cmd;		///< Command code
+	uint16_t datalen;	///< Data length
+	// If datalen is nonzero, additional command data goes here until
+	// filling datalen bytes.
+	union {
+		uint8_t ch;		// Channel number for channel related requests
+		uint8_t data[MW_CMD_MAX_BUFLEN];// Might need adjusting data length!
+		MwMsgInAddr inAddr;
+		MwMsgApCfg apCfg;
+		MwMsgIpCfg ipCfg;
+	};
+} MwCmd;
+/** \} */
+
+typedef struct {
+	union {
+		uint8_t data[MW_MSG_MAX_BUFLEN];	///< Buffer raw data
+		MwCmd cmd;							///< Command
+	};
+	uint16_t len;							///< Length of buffer contents
+	uint8_t ch;								///< Channel associated with buffer
+} MwMsgBuf;
 
 /** \addtogroup MwApi MwFsmMsg Message parsed by the FSM
  *  \{ */

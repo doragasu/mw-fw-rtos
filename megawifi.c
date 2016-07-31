@@ -11,6 +11,7 @@
 
 // Newlib
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // FreeRTOS
@@ -43,7 +44,6 @@ typedef enum {
 	MW_ST_INIT = 0,		///< Initialization state.
 	MW_ST_IDLE,			///< Idle state, until connected to an AP.
 	MW_ST_SCAN,			///< Scanning access points.
-	MW_ST_TIME_CONF,	///< Waiting for SNTP date/time configuration.
 	MW_ST_READY,		///< Ready for communicating through the Internet.
 	MW_ST_TRANSPARENT,	///< Transparent communication state.
 	MW_ST_MAX			///< Limit number for state machine.
@@ -60,7 +60,7 @@ typedef enum {
 /** \} */
 
 /// Commands allowed while in IDLE state
-const static uint8_t MwIdleCmds[] = {
+const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
@@ -68,7 +68,7 @@ const static uint8_t MwIdleCmds[] = {
 };
 
 /// Commands allowed while in READY state
-const static uint8_t MwReadyCmds[] = {
+const static uint8_t mwReadyCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
 	MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_LEAVE, MW_CMD_TCP_CON,
 	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_STAT, MW_CMD_TCP_DISC,
@@ -152,15 +152,78 @@ static void MwSetDefaultCfg(void) {
 	// NOTE: Checksum is only computed before storing configuration
 }
 
+// Prints data of a WiFi station
+void PrintStationData(struct sdk_bss_info *bss) {
+	AUTH_MODE atmp;
+	// Character strings related to supported authentication modes
+	const char *authStr[AUTH_MAX + 1] = {
+		"OPEN", "WEP", "WPA_PSK", "WPA2_PSK", "WPA_WPA2_PSK", "???"
+	};
+
+
+	atmp = MIN(bss->authmode, AUTH_MAX);
+	printf("%s, %s, ch=%d, str=%d\n",
+			bss->ssid, authStr[atmp], bss->channel, bss->rssi);
+}
+
+/// Prints a list of found scanned stations
+void MwBssListPrint(struct sdk_bss_info *bss) {
+	// Traverse the bss list, ignoring first entry
+	while (bss->next.stqe_next != NULL) {
+		bss = bss->next.stqe_next;
+		PrintStationData(bss);
+	}
+	dprintf("That's all!\n\n");
+}
+
+#ifdef _DEBUG_MSGS
+#define MwDebBssListPrint(bss)	do{MwBssListPrint(bss);}while(0)
+#else
+#define MwDebBssListPrint(bss)
+#endif
+
 // Scan complete callback: called when a WiFi scan operation has finished.
 static void ScanCompleteCb(struct sdk_bss_info *bss,
 		                   sdk_scan_status_t status) {
 	MwFsmMsg m;
 	m.e = MW_EV_SCAN;
+	uint16_t repLen, tmp;
+	MwCmd *rep;
+	struct sdk_bss_info *start = bss;
+	uint8_t *data;
 
 	if (status == SCAN_OK) {
-		dprintf("Scan complete!\n");
-		m.d = bss;
+		MwDebBssListPrint(bss);
+		repLen = tmp = 0;
+		while (bss->next.stqe_next != NULL) {
+			bss = bss->next.stqe_next;
+			tmp += 4 + strnlen((const char*)bss->ssid, 32);
+			// Check we have not exceeded maximum length, truncate
+			// output if exceeded.
+			if (tmp <= (LSD_MAX_LEN - 4)) repLen = tmp;
+			else break;
+		}
+		if (!(rep = (MwCmd*) malloc(repLen + 4))) {
+			dprintf("ScanCompleteCb: malloc failed!\n");
+			return;
+		}
+		// Fill in reply data
+		bss = start;
+		rep->cmd = MW_CMD_OK;
+		rep->datalen = ByteSwapWord(repLen);
+		data = rep->data;
+		tmp = 0;
+		while ((bss->next.stqe_next != NULL) && (tmp < repLen)) {
+			bss = bss->next.stqe_next;
+			data[0] = bss->authmode;
+			data[1] = bss->channel;
+			data[2] = bss->rssi;
+			data[3] = strnlen((const char*)bss->ssid, 32);
+			memcpy(data + 4, bss->ssid, data[3]);
+			tmp += 4 + data[3];
+			data += 4 + data[3];
+		}
+		m.d = rep;
 	} else {
 		// Scan failed, set null pointer for the FSM to notice.
 		dprintf("Scan failed with error %d!\n", status);
@@ -488,7 +551,14 @@ void MwFsmReady(MwFsmMsg *msg) {
 			// to the appropiate socket.
 			if (MW_CTRL_CH == b->ch) {
 				// Check command is allowed on READY state
-				MwFsmCmdProc((MwCmd*)b, b->len);
+				if (MwCmdInList(b->cmd.cmd>>8, mwReadyCmds,
+							sizeof(mwReadyCmds))) {
+					MwFsmCmdProc((MwCmd*)b, b->len);
+				} else {
+					dprintf("Command %d not allowed on READY state\n",
+							b->cmd.cmd>>8);
+					// TODO: Throw error event
+				}
 			} else {
 				// Forward message if channel is enabled.
 				if (b->ch < LSD_MAX_CH && d.chan[b->ch - 1]) {
@@ -535,46 +605,17 @@ void MwFsmReady(MwFsmMsg *msg) {
 	}
 }
 
-// Prints data of a WiFi station
-void PrintStationData(struct sdk_bss_info *bss) {
-	AUTH_MODE atmp;
-	// Character strings related to supported authentication modes
-	const char *authStr[AUTH_MAX + 1] = {
-		"OPEN", "WEP", "WPA_PSK", "WPA2_PSK", "WPA_WPA2_PSK", "???"
-	};
-
-
-	atmp = MIN(bss->authmode, AUTH_MAX);
-	printf("%s, %s, ch=%d, str=%d\n",
-			bss->ssid, authStr[atmp], bss->channel, bss->rssi);
-}
-
-/// Prints a list of found scanned stations
-void MwBssListPrint(struct sdk_bss_info *bss) {
-	// Traverse the bss list, ignoring first entry
-	while (bss->next.stqe_next != NULL) {
-		bss = bss->next.stqe_next;
-		PrintStationData(bss);
-	}
-	dprintf("\nThat's all!\n\n");
-}
-
-#ifdef _DEBUG_MSGS
-#define MwDebBssListPrint(bss)	do{MwBssListPrint(bss);}while(0)
-#else
-#define MwDebBssListPrint(bss)
-#endif
-
 static void MwFsm(MwFsmMsg *msg) {
 	// UART events shoulb be processed on the UART receive task, and send
 	// proper events to FSM!
 //	if (e->sig == MW_EVT_UART_IN) {
 //	}
-	uint16_t repLen;
-	uint16_t tmp;
-	struct sdk_bss_info *bss;
-	uint8_t scratch[4];
+//	uint16_t repLen;
+//	uint16_t tmp;
+//	struct sdk_bss_info *bss;
+//	uint8_t scratch[4];
 	MwMsgBuf *b = msg->d;
+	MwCmd *rep;
 
 	switch (d.s) {
 		case MW_ST_INIT:
@@ -604,7 +645,14 @@ static void MwFsm(MwFsmMsg *msg) {
 				dprintf("Serial recvd %d bytes.\n", b->len);
 				if (MW_CTRL_CH == b->ch) {
 					// Check command is allowed on IDLE state
-					MwFsmCmdProc((MwCmd*)b, b->len);
+					if (MwCmdInList(b->cmd.cmd>>8, mwIdleCmds,
+								sizeof(mwIdleCmds))) {
+						MwFsmCmdProc((MwCmd*)b, b->len);
+					} else {
+						dprintf("Command %d not allowed on IDLE state\n",
+								b->cmd.cmd>>8);
+						// TODO: Throw error event
+					}
 				} else {
 					dprintf("IDLE received data on non ctrl channel!\n");
 				}
@@ -619,40 +667,15 @@ static void MwFsm(MwFsmMsg *msg) {
 		case MW_ST_SCAN:
 			// Ignore events until we receive the scan result
 			if (MW_EV_SCAN == msg->e) {
-				// If debug active, print station list
-				bss = (struct sdk_bss_info*)msg->d;
-				MwDebBssListPrint(bss);
-				// Send station data to client. First obtain frame length,
-				// to be able to do a split frame send (and avoid wasting
-				// memory). For each found station, the length will be the
-				// SSID length + 4 (mode, ch, strength, SSID length)
-				repLen = tmp = 0;
-				while (bss->next.stqe_next != NULL) {
-					bss = bss->next.stqe_next;
-					tmp += 4 + strnlen((const char*)bss->ssid, 32);
-					// Check we have not exceeded maximum length, truncate
-					// output if exceeded.
-					if (tmp <= LSD_MAX_LEN) repLen = tmp;
-					else break;
-				}
-				// Start transmission and send data
-				tmp = 0;
-				LsdSplitStart(NULL, 0, repLen, 0);
-				while (bss->next.stqe_next != NULL && (tmp < repLen)) {
-					bss = bss->next.stqe_next;
-					scratch[0] = bss->authmode;
-					scratch[1] = bss->channel;
-					scratch[2] = bss->rssi;
-					scratch[3] = strnlen((const char*)bss->ssid, 32);
-					LsdSplitNext(scratch, 4);
-					LsdSplitNext(bss->ssid, scratch[3]);
-				}
-				LsdSplitEnd(NULL, 0);
+				// We receive the station data reply ready to be sent
+				dprintf("Sending station data\n");
+				rep = (MwCmd*)msg->d;
+				LsdSend((uint8_t*)rep, ByteSwapWord(rep->datalen) +
+						MW_CMD_HEADLEN, 0);
+				free(rep);
+				d.s = MW_ST_IDLE;
+				dprintf("IDLE!\n");
 			}
-			break;
-
-		case MW_ST_TIME_CONF:
-			// 
 			break;
 
 		case MW_ST_READY:
