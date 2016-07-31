@@ -68,6 +68,12 @@ typedef struct {
 	struct ip_addr dns2;
 } MwMsgIpCfg;
 
+/// Date and time message
+typedef struct {
+	uint32_t dtBin[2];
+	char dtStr[MW_CMD_MAX_BUFLEN - sizeof(uint64_t)];
+} MwMsgDateTime;
+
 /** \addtogroup MwApi MwCmd Command sent to system FSM
  *  \{ */
 typedef struct {
@@ -81,6 +87,7 @@ typedef struct {
 		MwMsgInAddr inAddr;
 		MwMsgApCfg apCfg;
 		MwMsgIpCfg ipCfg;
+			MwMsgDateTime datetime;
 	};
 } MwCmd;
 /** \} */

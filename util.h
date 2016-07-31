@@ -27,8 +27,8 @@
 
 /// Swaps bytes from a qword (64 bits)
 #define ByteSwapQWord(qw)	(uint64_t)((((uint64_t)(qw))>>56) |                \
-	((((uint64_t)(dw))>>40) & 0xFF00) | ((((uint64_t)(qw))>>24) & 0xFF0000) | \
-    ((((uint64_t)(dw))>>8) & 0xFF000000) |                                    \
+	((((uint64_t)(qw))>>40) & 0xFF00) | ((((uint64_t)(qw))>>24) & 0xFF0000) | \
+    ((((uint64_t)(qw))>>8) & 0xFF000000) |                                    \
     ((((uint64_t)(qw)) & 0xFF000000)<<8) |                                    \
     ((((uint64_t)(qw)) & 0xFF0000)<<24)  |                                    \
     ((((uint64_t)(qw)) & 0xFF00)<< 40)   | (((uint64_t)(qw))<<56))

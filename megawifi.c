@@ -243,6 +243,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
 	struct in_addr *raddr;
 	int err;
 	int s;
+	printf("Con. ch %d to %s:%s\n", addr->channel, addr->data, addr->dst_port);
 
 	// Check channel is valid and not in use.
 	if (addr->channel >= LSD_MAX_CH) {
@@ -388,6 +389,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
 	uint16_t len = ByteSwapWord(c->datalen);
 	time_t ts;	// For datetime replies
+	uint16_t tmp;
 	
 	// Sanity check: total Lengt - header length = data length
 	if ((totalLen - MW_CMD_HEADLEN) != len) {
@@ -397,7 +399,18 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	}
 
 	// parse command
+	dprintf("CmdRequest: %d\n", ByteSwapWord(c->cmd));
 	switch (ByteSwapWord(c->cmd)) {
+		case MW_CMD_VERSION:
+			reply.cmd = MW_CMD_OK;
+			reply.datalen = ByteSwapWord(2 + sizeof(MW_FW_VARIANT) - 1);
+			reply.data[0] = MW_FW_VERSION_MAJOR;
+			reply.data[1] = MW_FW_VERSION_MINOR;
+			memcpy(reply.data + 2, MW_FW_VARIANT, sizeof(MW_FW_VARIANT) - 1);
+			LsdSend((uint8_t*)&reply, ByteSwapWord(reply.datalen) +
+					MW_CMD_HEADLEN, 0);
+			break;
+
 		case MW_CMD_ECHO:		// Echo request
 			reply.cmd = ByteSwapWord(MW_CMD_OK);
 			reply.datalen = c->datalen;
@@ -425,8 +438,16 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			dprintf("AP_CFG unimplemented\n");
 			break;
 
+		case MW_CMD_AP_CFG_GET:
+			dprintf("AP_CFG_GET unimplemented\n");
+			break;
+
 		case MW_CMD_IP_CFG:
 			dprintf("IP_CFG unimplemented\n");
+			break;
+
+		case MW_CMD_IP_CFG_GET:
+			dprintf("IP_CFG_GET unimplemented\n");
 			break;
 
 		case MW_CMD_AP_JOIN:
@@ -510,10 +531,18 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_DATETIME:
 			reply.cmd = MW_CMD_OK;
+			reply.datetime.dtBin[0] = 0;
+			reply.datetime.dtBin[1] = ByteSwapDWord(ts);
 			ts = time(NULL);
-			reply.datalen = StrCpyDst((char*)reply.data, ctime(&ts)) -
-				(char*)reply.data;
-			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + reply.datalen, 0);
+			strcpy(reply.datetime.dtStr, ctime(&ts));
+			dprintf("sending datetime %s\n", reply.datetime.dtStr);
+			tmp = 2*sizeof(uint32_t) + strlen(reply.datetime.dtStr);
+			reply.datalen = ByteSwapWord(tmp);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + tmp, 0);
+			break;
+
+		case MW_CMD_DT_SET:
+			dprintf("DT_SET unimplemented\n");
 			break;
 
 		case MW_CMD_FLASH_WRITE:
