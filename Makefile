@@ -1,5 +1,5 @@
 PROGRAM=mw-fw-rtos
-EXTRA_COMPONENTS=extras/stdin_uart_interrupt extras/sntp
+EXTRA_COMPONENTS=extras/stdin_uart_interrupt extras/sntp extras/mbedtls
 EXTRA_CFLAGS += -D_DEBUG_MSGS
 MDMAP ?= $(HOME)/src/github/mw-mdma-cli/mdma -w
 

@@ -74,6 +74,16 @@ typedef struct {
 	char dtStr[MW_CMD_MAX_BUFLEN - sizeof(uint64_t)];
 } MwMsgDateTime;
 
+typedef struct {
+	uint32_t addr;
+	uint8_t data[MW_CMD_MAX_BUFLEN - sizeof(uint32_t)];
+} MwMsgFlashData;
+
+typedef struct {
+	uint32_t addr;
+	uint16_t len;
+} MwMsgFlashRange;
+
 /** \addtogroup MwApi MwCmd Command sent to system FSM
  *  \{ */
 typedef struct {
@@ -83,11 +93,13 @@ typedef struct {
 	// filling datalen bytes.
 	union {
 		uint8_t ch;		// Channel number for channel related requests
-		uint8_t data[MW_CMD_MAX_BUFLEN];// Might need adjusting data length!
+		uint8_t data[MW_CMD_MAX_BUFLEN];
 		MwMsgInAddr inAddr;
 		MwMsgApCfg apCfg;
 		MwMsgIpCfg ipCfg;
-			MwMsgDateTime datetime;
+		MwMsgDateTime datetime;
+		MwMsgFlashData flData;
+		MwMsgFlashRange flRange;
 	};
 } MwCmd;
 /** \} */

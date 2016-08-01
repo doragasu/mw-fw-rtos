@@ -26,6 +26,9 @@
 #include <lwip/netdb.h>
 #include <lwip/dns.h>
 
+// mbedtls
+#include <mbedtls/md5.h>
+
 // Time keeping
 #include <sntp.h>
 #include <time.h>
@@ -37,6 +40,12 @@
 #include "megawifi.h"
 #include "lsd.h"
 #include "util.h"
+
+/// Configuration address, stored on the last sector 4 KiB of the first 512 KiB
+#define MW_CFG_FLASH_ADDR	((512 - 4) * 1024)
+
+/// Flash sector number where the configuration is stored
+#define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
 /** \addtogroup MwApi MwState Possible states of the system state machine.
  *  \{ */
@@ -64,7 +73,7 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
-	MW_CMD_FLASH_READ
+	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID
 };
 
 /// Commands allowed while in READY state
@@ -74,7 +83,7 @@ const static uint8_t mwReadyCmds[] = {
 	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_STAT, MW_CMD_TCP_DISC,
 	MW_CMD_UDP_SET, MW_CMD_UDP_STAT, MW_CMD_UDP_CLR, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
-	MW_CMD_FLASH_READ
+	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID
 };
 
 /*
@@ -106,7 +115,7 @@ typedef struct {
 	/// Timezone to use with SNTP.
 	uint8_t timezone;
 	/// Checksum
-	uint8_t csum;
+	uint8_t md5[16];
 } MwNvCfg;
 /** \} */
 
@@ -295,7 +304,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
 	return s;
 }
 
-// Closes a socket on the specified channel
+/// Closes a socket on the specified channel
 void MwFsmTcpDis(int ch) {
 	// TODO Might need to use a semaphore to access socket variables.
 	ch--;
@@ -326,7 +335,46 @@ inline uint8_t MwCmdInList(uint8_t cmd, const uint8_t *list,
 	return !(i == listLen);
 }
 
+
+/// Saves configuration to non volatile flash
+void MwNvCfgSave(void) {
+	// Compute MD5 of the configuration data
+	mbedtls_md5((const unsigned char*)&cfg, sizeof(MwNvCfg) - 16, cfg.md5);
+	// Erase configuration sector
+	if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
+			SPI_FLASH_RESULT_OK) {
+		dprintf("Flash sector 0x%X erase failed!\n", MW_CFG_FLASH_SECT);
+		return;
+	}
+	// Write configuration to flash
+	if (sdk_spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
+			sizeof(MwNvCfg)) != SPI_FLASH_RESULT_OK) {
+		dprintf("Flash write addr 0x%X failed!\n", MW_CFG_FLASH_ADDR);
+	}
+}
+
 void MwApCfg(void) {
+}
+
+// Load configuration from flash. Return 0 if configuration was successfully
+// loaded and verified, 1 if configuration check did not pass and default
+// configuration has been loaded instead.
+int MwCfgLoad(void) {
+	uint8_t md5[16];
+
+	// Load configuration from flash
+	sdk_spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
+	// Check MD5
+	mbedtls_md5((const unsigned char*)&cfg, sizeof(MwNvCfg) - 16, md5);
+	if (!memcmp(cfg.md5, md5, 16)) {
+		// MD5 test passed, return with loaded configuration
+		dprintf("Configuration loaded from flash.\n");
+		return 0;
+	}
+	// MD5 did not pass, load default configuration
+	MwSetDefaultCfg();
+	dprintf("Loaded default configuration.\n");
+	return 1;
 }
 
 /************************************************************************//**
@@ -342,12 +390,7 @@ void MwInit(void) {
 //	uint8_t csum = 0;
 
 	// Load configuration from flash
-	// TODO: Test flash API
-//	system_param_load(MW_CFG_FLASH_SEQ, 0, &cfg, sizeof(cfg));
-//	// If configuration not OK, load default values.
-//	for (i = 0; i < sizeof(cfg); i++) csum += ((uint8_t*)&cfg)[i];
-//	if (csum) MwSetDefaultCfg();
-	MwSetDefaultCfg();
+	MwCfgLoad();
 	// Set default values for global variables
 	memset(&d, 0, sizeof(d));
 	d.s = MW_ST_INIT;
@@ -472,9 +515,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			dprintf("TRYING TO CONNECT TCP SOCKET...\n");
 			reply.datalen = 0;
 			if (MW_ST_READY == d.s) {
-				reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?MW_CMD_ERROR:
-					MW_CMD_OK;
-			} else reply.cmd = MW_CMD_ERROR;
+				reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
+						MW_CMD_ERROR):MW_CMD_OK;
+			} else reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			reply.cmd = ByteSwapWord(reply.cmd);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -501,7 +544,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				MwFsmTcpDis(c->data[0]);
 				reply.cmd = MW_CMD_OK;
 			} else {
-				reply.cmd = MW_CMD_ERROR;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				dprintf("Requested disconnect of not opened channel %d.\n",
 						c->data[0]);
 			}
@@ -546,11 +589,29 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_WRITE:
-			dprintf("FLASH_WRITE unimplemented\n");
+			// TODO Warning, we should ckeck for overflows to guarantee
+			// app area will not be written to!
+			reply.datalen = 0;
+			reply.cmd = MW_CMD_OK;
+			if (sdk_spi_flash_write(ByteSwapDWord(c->flData.addr) +
+					MW_FLASH_USER_BASE_ADDR, (uint32_t*)c->flData.data, len -
+					sizeof(uint32_t)) != SPI_FLASH_RESULT_OK) {
+				dprintf("Write to flash failed!\n");
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FLASH_READ:
 			dprintf("FLASH_READ unimplemented\n");
+			break;
+
+		case MW_CMD_FLASH_ERASE:
+			dprintf("FLASH_ERASE unimplemented\n");
+			break;
+
+		case MW_CMD_FLASH_ID:
+			dprintf("FLASH_ID unimplemented\n");
 			break;
 
 		default:
