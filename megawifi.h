@@ -75,7 +75,7 @@
 /** \} */
 
 /// Base flash address for the user to read/write data
-#define MW_FLASH_USER_BASE_ADDR		0x8000
+#define MW_FLASH_USER_BASE_ADDR		0x80000
 /// Base flash sector for the user to read/write data
 #define MW_FLASH_USER_BASE_SECT		(MW_FLASH_USER_BASE_ADDR>>12)
 

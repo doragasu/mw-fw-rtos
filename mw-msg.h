@@ -100,6 +100,8 @@ typedef struct {
 		MwMsgDateTime datetime;
 		MwMsgFlashData flData;
 		MwMsgFlashRange flRange;
+		uint16_t flSect;	// Flash sector
+		uint32_t flId;		// Flash IDs
 	};
 } MwCmd;
 /** \} */

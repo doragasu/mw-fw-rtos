@@ -589,13 +589,20 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_WRITE:
-			// TODO Warning, we should ckeck for overflows to guarantee
-			// app area will not be written to!
 			reply.datalen = 0;
 			reply.cmd = MW_CMD_OK;
-			if (sdk_spi_flash_write(ByteSwapDWord(c->flData.addr) +
-					MW_FLASH_USER_BASE_ADDR, (uint32_t*)c->flData.data, len -
-					sizeof(uint32_t)) != SPI_FLASH_RESULT_OK) {
+			// Compute effective flash address
+			c->flData.addr = ByteSwapDWord(c->flData.addr) +
+				MW_FLASH_USER_BASE_ADDR;
+			// Check for overflows (avoid malevolous attempts to write to
+			// protected area
+			if ((c->flData.addr + (len - sizeof(uint32_t) - 1)) <
+					MW_FLASH_USER_BASE_ADDR) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Address/length combination overflows!\n");
+			} else if (sdk_spi_flash_write(c->flData.addr,
+						(uint32_t*)c->flData.data, len - sizeof(uint32_t)) !=
+					SPI_FLASH_RESULT_OK) {
 				dprintf("Write to flash failed!\n");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			}
@@ -603,15 +610,56 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_READ:
-			dprintf("FLASH_READ unimplemented\n");
+			// Compute effective flash address
+			c->flRange.addr = ByteSwapDWord(c->flRange.addr) +
+				MW_FLASH_USER_BASE_ADDR;
+			c->flRange.len = ByteSwapWord(c->flRange.len);
+			// Check requested length fits a transfer and there's no overflow
+			// on address and length (maybe a malicious attempt to read
+			// protected area
+			if ((c->flRange.len > MW_MSG_MAX_BUFLEN) || ((c->flRange.addr - 1 +
+					c->flRange.len) < MW_FLASH_USER_BASE_ADDR)) {
+				reply.datalen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Invalid address/length combination.\n");
+			// Perform read and check result
+			} else if (sdk_spi_flash_read(c->flRange.addr,
+						(uint32_t*)reply.data, c->flRange.len) !=
+					SPI_FLASH_RESULT_OK) {
+				reply.datalen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Flash read failed!\n");
+			} else {
+				reply.datalen = ByteSwapWord(c->flRange.len);
+				reply.cmd = MW_CMD_OK;
+				dprintf("Flash read OK!\n");
+			}
+			LsdSend((uint8_t*)&reply, c->flRange.len + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FLASH_ERASE:
-			dprintf("FLASH_ERASE unimplemented\n");
+			reply.datalen = 0;
+			// Check for sector overflow
+			c->flSect = ByteSwapWord(c->flSect) + MW_FLASH_USER_BASE_SECT;
+			if (c->flSect < MW_FLASH_USER_BASE_SECT) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Wrong sector number.\n");
+			} else if (sdk_spi_flash_erase_sector(c->flSect) !=
+					SPI_FLASH_RESULT_OK) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Sector erase failed!\n");
+			} else {
+				reply.cmd = MW_CMD_OK;
+				dprintf("Sector erase OK!\n");
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FLASH_ID:
-			dprintf("FLASH_ID unimplemented\n");
+			reply.cmd = MW_CMD_OK;
+			reply.datalen = ByteSwapWord(sizeof(uint32_t));
+			reply.flId = sdk_spi_flash_get_id();
+			LsdSend((uint8_t*)&reply, sizeof(uint32_t) + MW_CMD_HEADLEN, 0);
 			break;
 
 		default:
