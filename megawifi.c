@@ -150,17 +150,6 @@ static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
 
-/// Set default configuration.
-static void MwSetDefaultCfg(void) {
-	memset(&cfg, 0, sizeof(cfg));
-	cfg.defaultAp = -1;
-	// Copy the 3 default NTP servers
-	*(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(cfg.ntpPool, MW_SNTP_SERV_0),
-		MW_SNTP_SERV_1), MW_SNTP_SERV_2)) = '\0';
-	cfg.ntpUpDelay = 300;	// Update each 5 minutes
-	// NOTE: Checksum is only computed before storing configuration
-}
-
 // Prints data of a WiFi station
 void PrintStationData(struct sdk_bss_info *bss) {
 	AUTH_MODE atmp;
@@ -335,11 +324,31 @@ inline uint8_t MwCmdInList(uint8_t cmd, const uint8_t *list,
 	return !(i == listLen);
 }
 
+void PrintHex(uint8_t data[], uint16_t len) {
+	uint16_t i;
+
+	for (i = 0; i < len; i++) printf("%02x", data[i]);
+}
+
+/// Set default configuration.
+static void MwSetDefaultCfg(void) {
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.defaultAp = -1;
+	// Copy the 3 default NTP servers
+	*(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(cfg.ntpPool, MW_SNTP_SERV_0),
+		MW_SNTP_SERV_1), MW_SNTP_SERV_2)) = '\0';
+	cfg.ntpUpDelay = 300;	// Update each 5 minutes
+	// NOTE: Checksum is only computed before storing configuration
+}
 
 /// Saves configuration to non volatile flash
 void MwNvCfgSave(void) {
 	// Compute MD5 of the configuration data
-	mbedtls_md5((const unsigned char*)&cfg, sizeof(MwNvCfg) - 16, cfg.md5);
+	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
+			((uint32_t)&cfg), cfg.md5);
+#ifdef _DEBUG_MSGS
+	printf("Saved MD5: "); PrintHex(cfg.md5, 16); putchar('\n');
+#endif
 	// Erase configuration sector
 	if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
 			SPI_FLASH_RESULT_OK) {
@@ -350,7 +359,9 @@ void MwNvCfgSave(void) {
 	if (sdk_spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
 			sizeof(MwNvCfg)) != SPI_FLASH_RESULT_OK) {
 		dprintf("Flash write addr 0x%X failed!\n", MW_CFG_FLASH_ADDR);
+		return;
 	}
+	dprintf("Configuration saved to flash.\n");
 }
 
 void MwApCfg(void) {
@@ -365,15 +376,22 @@ int MwCfgLoad(void) {
 	// Load configuration from flash
 	sdk_spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
 	// Check MD5
-	mbedtls_md5((const unsigned char*)&cfg, sizeof(MwNvCfg) - 16, md5);
+	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
+			((uint32_t)&cfg), md5);
 	if (!memcmp(cfg.md5, md5, 16)) {
 		// MD5 test passed, return with loaded configuration
 		dprintf("Configuration loaded from flash.\n");
 		return 0;
 	}
+#ifdef _DEBUG_MSGS
+	printf("Loaded MD5:   "); PrintHex(cfg.md5, 16); putchar('\n');
+	printf("Computed MD5: "); PrintHex(md5, 16); putchar('\n');
+#endif
+
 	// MD5 did not pass, load default configuration
 	MwSetDefaultCfg();
 	dprintf("Loaded default configuration.\n");
+	MwNvCfgSave();
 	return 1;
 }
 
