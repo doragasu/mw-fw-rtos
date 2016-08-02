@@ -397,6 +397,19 @@ int MwCfgLoad(void) {
 	return 1;
 }
 
+void MwApJoin(uint8_t n) {
+	struct sdk_station_config stcfg;
+
+	memset(&stcfg, 0, sizeof(struct sdk_station_config));
+	strncpy((char*)stcfg.ssid, cfg.ap[n].ssid, MW_SSID_MAXLEN);
+	strncpy((char*)stcfg.password, cfg.ap[n].pass, MW_PASS_MAXLEN);
+	sdk_wifi_set_opmode(STATION_MODE);
+	sdk_wifi_station_set_config(&stcfg);
+	sdk_wifi_station_connect();
+	dprintf("AP JOIN!\n");
+	d.s = MW_ST_AP_JOIN;
+}
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/
@@ -534,7 +547,17 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_AP_JOIN:
-			dprintf("AP_JOIN unimplemented\n");
+			// Start connecting to AP and jump to AP_JOIN state
+			reply.datalen = 0;
+			if ((c->data[0] >= MW_NUM_AP_CFGS) ||
+					!(cfg.ap[c->data[0]].ssid[0])) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				MwApJoin(c->data[0]);
+				reply.cmd = MW_CMD_OK;
+				// TODO: Save configuration to update default AP?
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_AP_LEAVE:	// Leave access point
@@ -794,7 +817,6 @@ void MwFsmReady(MwFsmMsg *msg) {
 static void MwFsm(MwFsmMsg *msg) {
 	MwMsgBuf *b = msg->d;
 	MwCmd *rep;
-	struct sdk_station_config stcfg;
 
 	switch (d.s) {
 		case MW_ST_INIT:
@@ -804,18 +826,7 @@ static void MwFsm(MwFsmMsg *msg) {
 				// If there's a valid AP configuration, try to join it and
 				// jump to the AP_JOIN state. Else jump to IDLE state.
 				if ((cfg.defaultAp >= 0) && (cfg.defaultAp < MW_NUM_AP_CFGS)) {
-					memset(&stcfg, 0, sizeof(struct sdk_station_config));
-					strncpy((char*)stcfg.ssid,
-							cfg.ap[(uint8_t)cfg.defaultAp].ssid, 
-							MW_SSID_MAXLEN);
-					strncpy((char*)stcfg.password,
-							cfg.ap[(uint8_t)cfg.defaultAp].pass,
-							MW_PASS_MAXLEN);
-					sdk_wifi_set_opmode(STATION_MODE);
-					sdk_wifi_station_set_config(&stcfg);
-					sdk_wifi_station_connect();
-					dprintf("AP JOIN!\n");
-					d.s = MW_ST_AP_JOIN;
+					MwApJoin(cfg.defaultAp);
 					// TODO: Maybe we should set an AP join timeout.
 				} else {
 					dprintf("No default AP found.\nIDLE!\n");
