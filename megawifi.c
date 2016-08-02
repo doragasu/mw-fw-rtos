@@ -391,7 +391,6 @@ int MwCfgLoad(void) {
 	// MD5 did not pass, load default configuration
 	MwSetDefaultCfg();
 	dprintf("Loaded default configuration.\n");
-	MwNvCfgSave();
 	return 1;
 }
 
@@ -429,14 +428,17 @@ void MwInit(void) {
 	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_NUM_SERVERS_SUPPORTED) &&
 			((sntpLen = strlen(sntpSrv[i])) > 0); i++) {
 			sntpSrv[i + 1] = sntpSrv[i] + sntpLen + 1;
+			dprintf("SNTP server: %s\n", sntpSrv[i]);
 	}
 	if (i) {
-		sntp_set_update_delay(cfg.ntpUpDelay);
+		dprintf("%d SNTP servers found.\n", i);
 		tz.tz_dsttime = 60*cfg.timezone;
 		tz.tz_minuteswest = 0;
 		sntp_initialize(&tz);
+		dprintf("Setting update delay to %d seconds.\n", cfg.ntpUpDelay);
+		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
 		sntp_set_servers(sntpSrv, i);
-	}
+	} else dprintf("No NTP servers found!\n");
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(&d.q);
 	LsdChEnable(MW_CTRL_CH);
