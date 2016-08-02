@@ -52,8 +52,9 @@
 typedef enum {
 	MW_ST_INIT = 0,		///< Initialization state.
 	MW_ST_IDLE,			///< Idle state, until connected to an AP.
+	MW_ST_AP_JOIN,		///< Trying to join an access point.
 	MW_ST_SCAN,			///< Scanning access points.
-	MW_ST_READY,		///< Ready for communicating through the Internet.
+	MW_ST_READY,		///< Connected to The Internet.
 	MW_ST_TRANSPARENT,	///< Transparent communication state.
 	MW_ST_MAX			///< Limit number for state machine.
 } MwState;
@@ -73,7 +74,8 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
-	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID
+	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
+	MW_CMD_DEF_CFG
 };
 
 /// Commands allowed while in READY state
@@ -83,7 +85,8 @@ const static uint8_t mwReadyCmds[] = {
 	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_STAT, MW_CMD_TCP_DISC,
 	MW_CMD_UDP_SET, MW_CMD_UDP_STAT, MW_CMD_UDP_CLR, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
-	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID
+	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
+	MW_CMD_DEF_CFG
 };
 
 /*
@@ -403,8 +406,10 @@ void MwInit(void) {
 	char *sntpSrv[SNTP_NUM_SERVERS_SUPPORTED];
 	size_t sntpLen = 0;
 	int i;
-//	uint16_t i;
-//	uint8_t csum = 0;
+
+	// If enabled, disable auto connect
+	if (sdk_wifi_station_get_auto_connect())
+		sdk_wifi_station_set_auto_connect(0);
 
 	// Load configuration from flash
 	MwCfgLoad();
@@ -413,7 +418,7 @@ void MwInit(void) {
 	d.s = MW_ST_INIT;
 
 	// Create system queue
-    d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg));
+    d.q  = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg));
   	// Create FSM task
 	xTaskCreate(MwFsmTsk, (signed char*)"FSM", MW_FSM_STACK_LEN, &d.q,
 			MW_FSM_PRIO, NULL);
@@ -498,7 +503,22 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_AP_CFG:
-			dprintf("AP_CFG unimplemented\n");
+			reply.datalen = 0;
+			if (c->apCfg.cfgNum >= MW_NUM_AP_CFGS) {
+				dprintf("Configuration %d not available!\n", c->apCfg.cfgNum);
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				// Copy configuration and save it to flash
+				dprintf("Setting AP configuration %d...\n", c->apCfg.cfgNum);
+				strncpy(cfg.ap[c->apCfg.cfgNum].ssid, c->apCfg.ssid,
+						MW_SSID_MAXLEN);
+				strncpy(cfg.ap[c->apCfg.cfgNum].pass, c->apCfg.pass,
+						MW_PASS_MAXLEN);
+				cfg.defaultAp = c->apCfg.cfgNum;
+				MwNvCfgSave();
+				reply.cmd = MW_CMD_OK;
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_AP_CFG_GET:
@@ -682,6 +702,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LsdSend((uint8_t*)&reply, sizeof(uint32_t) + MW_CMD_HEADLEN, 0);
 			break;
 
+		case MW_CMD_SYS_STAT:
+			dprintf("SYS_STAT unimplemented\n");
+			break;
+
+		case MW_CMD_DEF_CFG:
+			dprintf("DEF_CFG unimplemented\n");
+			break;
+
 		default:
 			dprintf("UNKNOWN REQUEST!\n");
 			break;
@@ -764,35 +792,69 @@ void MwFsmReady(MwFsmMsg *msg) {
 }
 
 static void MwFsm(MwFsmMsg *msg) {
-	// UART events shoulb be processed on the UART receive task, and send
-	// proper events to FSM!
-//	if (e->sig == MW_EVT_UART_IN) {
-//	}
-//	uint16_t repLen;
-//	uint16_t tmp;
-//	struct sdk_bss_info *bss;
-//	uint8_t scratch[4];
 	MwMsgBuf *b = msg->d;
 	MwCmd *rep;
+	struct sdk_station_config stcfg;
 
 	switch (d.s) {
 		case MW_ST_INIT:
 			// Ignore all events excepting the INIT DONE one
 			if (msg->e == MW_EV_INIT_DONE) {
-				d.s = MW_ST_IDLE;
-				// TODO Remove AP connection when completing command
-			    struct sdk_station_config config = {
-			        .ssid = WIFI_SSID,
-			        .password = WIFI_PASS,
-			    };
-			    sdk_wifi_set_opmode(STATION_MODE);
-			    sdk_wifi_station_set_config(&config);
-				// TODO: esp-open-rtos does not send events for WiFi status
-				// changes, so you have to poll
-				// sdk_wifi_station_get_connect_status() to know when the
-				// module got DHCP IP. So we should set a timer and call the
-				// above function each timeout.
 				dprintf("INIT DONE!\n");
+				// If there's a valid AP configuration, try to join it and
+				// jump to the AP_JOIN state. Else jump to IDLE state.
+				if ((cfg.defaultAp >= 0) && (cfg.defaultAp < MW_NUM_AP_CFGS)) {
+					memset(&stcfg, 0, sizeof(struct sdk_station_config));
+					strncpy((char*)stcfg.ssid,
+							cfg.ap[(uint8_t)cfg.defaultAp].ssid, 
+							MW_SSID_MAXLEN);
+					strncpy((char*)stcfg.password,
+							cfg.ap[(uint8_t)cfg.defaultAp].pass,
+							MW_PASS_MAXLEN);
+					sdk_wifi_set_opmode(STATION_MODE);
+					sdk_wifi_station_set_config(&stcfg);
+					sdk_wifi_station_connect();
+					dprintf("AP JOIN!\n");
+					d.s = MW_ST_AP_JOIN;
+					// TODO: Maybe we should set an AP join timeout.
+				} else {
+					dprintf("No default AP found.\nIDLE!\n");
+					d.s = MW_ST_IDLE;
+				}
+			}
+			break;
+
+		case MW_ST_AP_JOIN:
+			if (MW_EV_WIFI == msg->e) {
+				dprintf("WiFi event: %d\n", (uint32_t)msg->d);
+				switch ((uint32_t)msg->d) {
+					case STATION_GOT_IP:
+						// Connected!
+						dprintf("READY!\n");
+						d.s = MW_ST_READY;
+						break;
+
+					case STATION_CONNECTING:
+						break;
+
+					case STATION_IDLE:
+					case STATION_WRONG_PASSWORD:
+					case STATION_NO_AP_FOUND:
+					case STATION_CONNECT_FAIL:
+					default:
+						// Error
+						sdk_wifi_station_disconnect();
+						dprintf("Could not connect to AP!\nIDLE!\n");
+						d.s = MW_ST_IDLE;
+				}
+			} else if (MW_EV_SER_RX == msg->e) {
+				// The only rx event supported during AP_JOIN is AP_LEAVE
+				if (MW_CMD_AP_LEAVE == (b->cmd.cmd>>8)) {
+					MwFsmCmdProc((MwCmd*)b, b->len);
+				} else {
+					dprintf("Command %d not allowed on AP_JOIN state\n",
+							b->cmd.cmd>>8);
+				}
 			}
 			break;
 
@@ -813,11 +875,6 @@ static void MwFsm(MwFsmMsg *msg) {
 					}
 				} else {
 					dprintf("IDLE received data on non ctrl channel!\n");
-				}
-			} else if (MW_EV_WIFI == msg->e) {
-				if (STATION_GOT_IP ==  (uint32_t)msg->d) {
-					d.s = MW_ST_READY;
-					dprintf("READY!\n");
 				}
 			}
 			break;

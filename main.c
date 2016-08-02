@@ -15,6 +15,6 @@ void user_init(void) {
 	// Power the LED on
 	LedInit();
 	LedOn();
-	// Initializa MeGaWiFi system and FSM
+	// Initialize MeGaWiFi system and FSM
 	MwInit();
 }
