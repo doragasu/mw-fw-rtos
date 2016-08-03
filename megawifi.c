@@ -419,6 +419,7 @@ void MwInit(void) {
 	char *sntpSrv[SNTP_NUM_SERVERS_SUPPORTED];
 	size_t sntpLen = 0;
 	int i;
+	uint8_t tmp;
 
 	// If enabled, disable auto connect
 	if (sdk_wifi_station_get_auto_connect())
@@ -429,6 +430,18 @@ void MwInit(void) {
 	// Set default values for global variables
 	memset(&d, 0, sizeof(d));
 	d.s = MW_ST_INIT;
+
+	// If default IP configuration saved, apply it
+	// NOTE: IP configuration can only be set in user_init() context.
+	tmp = (uint8_t) cfg.defaultAp;
+	if ((tmp < MW_NUM_AP_CFGS) && (cfg.ip[tmp].ip.addr) &&
+			(cfg.ip[tmp].netmask.addr) && (cfg.ip[tmp].gw.addr)) {
+		if (sdk_wifi_set_ip_info(STATION_IF, cfg.ip + tmp)) {
+			dprintf("IP configuration set.\n");
+		} else {
+			dprintf("Failed setting IP configuration.\n");
+		}
+	}
 
 	// Create system queue
     d.q  = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg));
