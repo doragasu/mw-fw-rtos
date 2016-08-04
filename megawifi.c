@@ -7,7 +7,9 @@
 
 // Espressif definitions
 #include <espressif/esp_common.h>
+#include <espressif/user_interface.h>
 #include <esp/uart.h>
+#include <esp/hwrand.h>
 
 // Newlib
 #include <stdio.h>
@@ -345,7 +347,7 @@ static void MwSetDefaultCfg(void) {
 }
 
 /// Saves configuration to non volatile flash
-void MwNvCfgSave(void) {
+int MwNvCfgSave(void) {
 	// Compute MD5 of the configuration data
 	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), cfg.md5);
@@ -356,15 +358,16 @@ void MwNvCfgSave(void) {
 	if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
 			SPI_FLASH_RESULT_OK) {
 		dprintf("Flash sector 0x%X erase failed!\n", MW_CFG_FLASH_SECT);
-		return;
+		return -1;
 	}
 	// Write configuration to flash
 	if (sdk_spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
 			sizeof(MwNvCfg)) != SPI_FLASH_RESULT_OK) {
 		dprintf("Flash write addr 0x%X failed!\n", MW_CFG_FLASH_ADDR);
-		return;
+		return -1;
 	}
 	dprintf("Configuration saved to flash.\n");
+	return 0;
 }
 
 void MwApCfg(void) {
@@ -436,10 +439,19 @@ void MwInit(void) {
 	tmp = (uint8_t) cfg.defaultAp;
 	if ((tmp < MW_NUM_AP_CFGS) && (cfg.ip[tmp].ip.addr) &&
 			(cfg.ip[tmp].netmask.addr) && (cfg.ip[tmp].gw.addr)) {
+		sdk_wifi_station_dhcpc_stop();
 		if (sdk_wifi_set_ip_info(STATION_IF, cfg.ip + tmp)) {
-			dprintf("IP configuration set.\n");
+			dprintf("Static IP configuration set.\n");
+			// Set DNS servers if available
+			if (cfg.dns[tmp][0].addr) {
+				dns_setserver(0, cfg.dns[tmp] + 0);
+				if (cfg.dns[tmp][1].addr) {
+					dns_setserver(1, cfg.dns[tmp] + 1);
+				}
+			}
 		} else {
-			dprintf("Failed setting IP configuration.\n");
+			dprintf("Failed setting static IP configuration.\n");
+			sdk_wifi_station_dhcpc_start();
 		}
 	}
 
@@ -483,7 +495,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
 	uint16_t len = ByteSwapWord(c->datalen);
 	time_t ts;	// For datetime replies
-	uint16_t tmp;
+	uint16_t tmp, replen;
 	
 	// Sanity check: total Lengt - header length = data length
 	if ((totalLen - MW_CMD_HEADLEN) != len) {
@@ -530,33 +542,76 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_AP_CFG:
 			reply.datalen = 0;
-			if (c->apCfg.cfgNum >= MW_NUM_AP_CFGS) {
-				dprintf("Configuration %d not available!\n", c->apCfg.cfgNum);
+			tmp = c->apCfg.cfgNum;
+			if (tmp >= MW_NUM_AP_CFGS) {
+				dprintf("Configuration %d not available!\n", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
 				// Copy configuration and save it to flash
 				dprintf("Setting AP configuration %d...\n", c->apCfg.cfgNum);
-				strncpy(cfg.ap[c->apCfg.cfgNum].ssid, c->apCfg.ssid,
-						MW_SSID_MAXLEN);
-				strncpy(cfg.ap[c->apCfg.cfgNum].pass, c->apCfg.pass,
-						MW_PASS_MAXLEN);
-				cfg.defaultAp = c->apCfg.cfgNum;
-				MwNvCfgSave();
-				reply.cmd = MW_CMD_OK;
+				strncpy(cfg.ap[tmp].ssid, c->apCfg.ssid, MW_SSID_MAXLEN);
+				strncpy(cfg.ap[tmp].pass, c->apCfg.pass, MW_PASS_MAXLEN);
+				cfg.defaultAp = tmp;
+				// TODO Check return value
+				if (MwNvCfgSave() < 0) {
+					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				} else {
+					reply.cmd = MW_CMD_OK;
+				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_AP_CFG_GET:
-			dprintf("AP_CFG_GET unimplemented\n");
+			tmp = c->apCfg.cfgNum;
+			if (tmp >= MW_NUM_AP_CFGS) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				reply.datalen = 0;
+				replen = 0;
+			} else {
+				reply.cmd = MW_CMD_OK;
+				replen = sizeof(MwMsgApCfg);
+				reply.datalen = ByteSwapWord(sizeof(MwMsgApCfg));
+				reply.apCfg.cfgNum = c->apCfg.cfgNum;
+				strncpy(reply.apCfg.ssid, cfg.ap[tmp].ssid, MW_SSID_MAXLEN);
+				strncpy(reply.apCfg.pass, cfg.ap[tmp].pass, MW_PASS_MAXLEN);
+			} 
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_IP_CFG:
-			dprintf("IP_CFG unimplemented\n");
+			tmp = (uint8_t)c->ipCfg.cfgNum;
+			reply.datalen = 0;
+			if (tmp >= MW_NUM_AP_CFGS) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				cfg.ip[tmp] = c->ipCfg.cfg;
+				cfg.dns[tmp][0] = c->ipCfg.dns1;
+				cfg.dns[tmp][1] = c->ipCfg.dns2;
+				if (MwNvCfgSave() < 0) {
+					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				} else {
+					reply.cmd = MW_CMD_OK;
+				}
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_IP_CFG_GET:
-			dprintf("IP_CFG_GET unimplemented\n");
+			tmp = c->ipCfg.cfgNum;
+			reply.datalen = replen = 0;
+			if (tmp >= MW_NUM_AP_CFGS) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				reply.cmd = MW_CMD_OK;
+				replen = sizeof(MwMsgIpCfg);
+				reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
+				reply.ipCfg.cfgNum = c->ipCfg.cfgNum;
+				reply.ipCfg.cfg = cfg.ip[tmp];
+				reply.ipCfg.dns1 = cfg.dns[tmp][0];
+				reply.ipCfg.dns2 = cfg.dns[tmp][1];
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_AP_JOIN:
@@ -744,6 +799,21 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_DEF_CFG:
 			dprintf("DEF_CFG unimplemented\n");
+			break;
+
+		case MW_HRNG_GET:
+			// TODO BUG! Check length is not too big!!!
+			replen = c->rndLen;
+			if (replen > MW_CMD_MAX_BUFLEN) {
+				replen = 0;
+				reply.datalen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				reply.cmd = MW_CMD_OK;
+				reply.datalen = c->rndLen;
+				hwrand_fill(reply.data, ByteSwapWord(c->rndLen));
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		default:

@@ -102,6 +102,7 @@ typedef struct {
 		MwMsgFlashRange flRange;
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
+		uint16_t rndLen;	// Length of the random buffer to fill
 	};
 } MwCmd;
 /** \} */
