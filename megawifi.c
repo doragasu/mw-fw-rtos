@@ -802,7 +802,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_HRNG_GET:
-			// TODO BUG! Check length is not too big!!!
 			replen = c->rndLen;
 			if (replen > MW_CMD_MAX_BUFLEN) {
 				replen = 0;
