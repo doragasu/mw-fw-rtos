@@ -77,7 +77,7 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
 	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
-	MW_CMD_DEF_CFG
+	MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
 };
 
 /// Commands allowed while in READY state
@@ -88,7 +88,7 @@ const static uint8_t mwReadyCmds[] = {
 	MW_CMD_UDP_SET, MW_CMD_UDP_STAT, MW_CMD_UDP_CLR, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
 	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
-	MW_CMD_DEF_CFG
+	MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
 };
 
 /*
@@ -114,11 +114,13 @@ typedef struct {
 	uint16_t ntpPoolLen;
 	/// Pool for SNTP configuration, up to 3 servers concatenaded and NULL
 	/// separated. Two NULL characters mark end of pool.
-	char ntpPool[MW_NTP_POOL_MAXLEN + 1];
+	char ntpPool[MW_NTP_POOL_MAXLEN];
 	/// Index of the configuration used on last connection (-1 for none).
 	char defaultAp;
 	/// Timezone to use with SNTP.
-	uint8_t timezone;
+	int8_t timezone;
+	/// One DST hour will be applied if set to 1
+	uint8_t dst;
 	/// Checksum
 	uint8_t md5[16];
 } MwNvCfg;
@@ -475,7 +477,8 @@ void MwInit(void) {
 	}
 	if (i) {
 		dprintf("%d SNTP servers found.\n", i);
-		tz.tz_dsttime = 60*cfg.timezone;
+		tz.tz_minuteswest = cfg.timezone * 60;
+		tz.tz_dsttime = cfg.dst;
 		tz.tz_minuteswest = 0;
 		sntp_initialize(&tz);
 		dprintf("Setting update delay to %d seconds.\n", cfg.ntpUpDelay);
@@ -700,7 +703,22 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SNTP_CFG:
-			dprintf("SNTP_CFG unimplemented\n");
+			reply.datalen = 0;
+			cfg.ntpUpDelay = ByteSwapWord(c->sntpCfg.upDelay);
+			cfg.ntpPoolLen = len - 4;
+			if ((cfg.ntpPoolLen > MW_NTP_POOL_MAXLEN) ||
+					(c->sntpCfg.tz < -11) || (c->sntpCfg.tz > 13)) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				cfg.timezone = c->sntpCfg.tz;
+				memcpy(cfg.ntpPool, c->sntpCfg.servers, cfg.ntpPoolLen);
+				if (MwNvCfgSave() < 0) {
+					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				} else {
+					reply.cmd = MW_CMD_OK;
+				}
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_DATETIME:
@@ -797,12 +815,26 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			dprintf("SYS_STAT unimplemented\n");
 			break;
 
-		case MW_CMD_DEF_CFG:
-			dprintf("DEF_CFG unimplemented\n");
+		case MW_CMD_DEF_CFG_SET:
+			reply.datalen = 0;
+			// Check lengt and magic value
+			if ((len != 4) || (c->dwData[0] !=
+						ByteSwapDWord(MW_FACT_RESET_MAGIC))) {
+				dprintf("Wrong DEF_CFG_SET command invocation!\n");
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
+					SPI_FLASH_RESULT_OK) {
+				dprintf("Config flash sector erase failed!\n");
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				dprintf("Configuration set to default.\n");
+				reply.cmd = MW_CMD_OK;
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
-		case MW_HRNG_GET:
-			replen = c->rndLen;
+		case MW_CMD_HRNG_GET:
+			replen = ByteSwapWord(c->rndLen);
 			if (replen > MW_CMD_MAX_BUFLEN) {
 				replen = 0;
 				reply.datalen = 0;
@@ -810,7 +842,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else {
 				reply.cmd = MW_CMD_OK;
 				reply.datalen = c->rndLen;
-				hwrand_fill(reply.data, ByteSwapWord(c->rndLen));
+				hwrand_fill(reply.data, replen);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;

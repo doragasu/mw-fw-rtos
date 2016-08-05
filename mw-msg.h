@@ -18,6 +18,8 @@
 /// Maximum password length (including '\0').
 #define MW_PASS_MAXLEN		64
 
+#define MW_FACT_RESET_MAGIC	0xFEAA5501	
+
 /** \addtogroup MwApi MwEvent Events parsed by the system FSM.
  *  \{ */
 /* TODO ADD UART EVENTS? MAYBE REMOVE SOCKET EVENTS? */
@@ -68,6 +70,14 @@ typedef struct {
 	struct ip_addr dns2;
 } MwMsgIpCfg;
 
+/// SNTP and timezone configuration
+typedef struct {
+	uint16_t upDelay;
+	int8_t tz;
+	uint8_t dst;
+	char servers[MW_CMD_MAX_BUFLEN - 4];
+} MwMsgSntpCfg;
+
 /// Date and time message
 typedef struct {
 	uint32_t dtBin[2];
@@ -94,9 +104,11 @@ typedef struct {
 	union {
 		uint8_t ch;		// Channel number for channel related requests
 		uint8_t data[MW_CMD_MAX_BUFLEN];
+		uint32_t dwData[MW_CMD_MAX_BUFLEN / sizeof(uint32_t)];
 		MwMsgInAddr inAddr;
 		MwMsgApCfg apCfg;
 		MwMsgIpCfg ipCfg;
+		MwMsgSntpCfg sntpCfg;
 		MwMsgDateTime datetime;
 		MwMsgFlashData flData;
 		MwMsgFlashRange flRange;
