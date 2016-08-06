@@ -41,6 +41,9 @@
 #include <task.h>
 #include <queue.h>
 
+/// LSD UART baud rate
+#define LSD_UART_BR		475625
+
 /** \addtogroup lsd ReturnCodes OK/Error codes returned by several functions.
  *  \{ */
 /// Function completed successfully
