@@ -72,7 +72,7 @@ void LsdInit(xQueueHandle *q) {
 	// Create receive task
 		xTaskCreate(LsdRecvTsk, (signed char*)"LSDR", 256, q, LSD_RECV_PRIO, NULL);
 	// Configure UARTs
-	uart_set_baud(LSD_UART, 115200);
+	uart_set_baud(LSD_UART, LSD_UART_BR);
 }
 
 /************************************************************************//**
