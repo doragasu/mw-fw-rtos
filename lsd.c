@@ -26,6 +26,9 @@
 /// Start of data in the buffer (skips STX and LEN fields).
 #define LSD_BUF_DATA_START 		3
 
+/// Threshold of the RX FIFO to generate RTS signal
+#define LSD_RX_RTS_THR	(128 - 16)
+
 /** \addtogroup lsd LsdState Allowed states for reception state machine.
  *  \{ */
 typedef enum {
@@ -60,6 +63,26 @@ void LsdRecvTsk(void *pvParameters);
 static LsdData d;
 
 /************************************************************************//**
+ * Enables RTS/CTS function for pins MTDO_U and MTCK_U and configures UART0
+ * to automatically generate RTS signal and use CTS line.
+ ****************************************************************************/
+void Uart0AutoRtsCtsCfg(void) {
+	// Configure pin functions
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U, FUNC_UART0_RTS);
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_UART0_CTS);	
+
+	// Configure RX threshold
+	UART(0).CONF1 &= ~(UART_RX_FLOW_THRHD<<UART_RX_FLOW_THRHD_S);
+	UART(0).CONF1 |= (LSD_RX_RTS_THR & UART_RX_FLOW_THRHD)<<
+		UART_RX_FLOW_THRHD_S;
+
+	// Enable RX flow control
+	UART(0).CONF1 |= UART_CONF1_RX_FLOWCTRL_ENABLE;
+	// Enable TX flow control
+	UART(0).CONF0 |= UART_CONF0_TX_FLOW_ENABLE;
+}
+
+/************************************************************************//**
  * Module initialization. Call this function before any other one in this
  * module.
  ****************************************************************************/
@@ -73,6 +96,7 @@ void LsdInit(xQueueHandle *q) {
 		xTaskCreate(LsdRecvTsk, (signed char*)"LSDR", 256, q, LSD_RECV_PRIO, NULL);
 	// Configure UARTs
 	uart_set_baud(LSD_UART, LSD_UART_BR);
+	Uart0AutoRtsCtsCfg();
 }
 
 /************************************************************************//**
