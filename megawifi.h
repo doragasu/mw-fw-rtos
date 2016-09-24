@@ -113,13 +113,49 @@
 #define MW_CMD_ERROR		255		///< Error command reply
 /** \} */
 
+/** \addtogroup MwApi MwState Possible states of the system state machine.
+ *  \{ */
+typedef enum {
+	MW_ST_INIT = 0,		///< Initialization state.
+	MW_ST_IDLE,			///< Idle state, until connected to an AP.
+	MW_ST_AP_JOIN,		///< Trying to join an access point.
+	MW_ST_SCAN,			///< Scanning access points.
+	MW_ST_READY,		///< Connected to The Internet.
+	MW_ST_TRANSPARENT,	///< Transparent communication state.
+	MW_ST_MAX			///< Limit number for state machine.
+} MwState;
+/** \} */
+
+/** \addtogroup MwApi MwSockStat Socket status.
+ *  \{ */
+typedef enum {
+	MW_SOCK_NONE = 0,	///< Unused socket.
+	MW_SOCK_TCP_LISTEN,	///< Socket bound and listening.
+	MW_SOCK_TCP_INCOM,	///< Incoming TCP connection.
+	MW_SOCK_TCP_EST,	///< TCP socket, connection established.
+	MW_SOCK_UDP			///< UDP socket
+} MwSockStat;
+/** \} */
+
 /** \addtogroup MwApi ApCfg Configuration needed to connect to an AP
  *  \{ */
 typedef struct {
 	char ssid[MW_SSID_MAXLEN];
 	char pass[MW_PASS_MAXLEN];
 } ApCfg;
+/** \} */
 
+/** \addtogroup MwApi MwSysStat System status
+ *  \{ */
+typedef struct {
+	MwState sys_stat:8;		///< System status
+	uint8_t pending:1;		///< Another event is pending
+	uint8_t online:1;		///< Module is connected to the Internet
+	uint8_t dt_ok:1;		///< Date and time synchronized at least once
+	uint8_t cfg_ok:1;		///< Configuration OK
+	uint8_t ch_ev:1;		///< Channel event available
+	uint8_t ch:4;			///< Channel with the pending event
+} MwSysStat;
 /** \} */
 
 /// Length of a command header (command and datalen fields)

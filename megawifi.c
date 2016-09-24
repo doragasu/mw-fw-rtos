@@ -49,28 +49,8 @@
 /// Flash sector number where the configuration is stored
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
-/** \addtogroup MwApi MwState Possible states of the system state machine.
- *  \{ */
-typedef enum {
-	MW_ST_INIT = 0,		///< Initialization state.
-	MW_ST_IDLE,			///< Idle state, until connected to an AP.
-	MW_ST_AP_JOIN,		///< Trying to join an access point.
-	MW_ST_SCAN,			///< Scanning access points.
-	MW_ST_READY,		///< Connected to The Internet.
-	MW_ST_TRANSPARENT,	///< Transparent communication state.
-	MW_ST_MAX			///< Limit number for state machine.
-} MwState;
-/** \} */
-
-/** \addtogroup MwApi MwSockStat Socket status.
- *  \{ */
-typedef enum {
-	MW_SOCK_NONE = 0,	///< Unused socket.
-	MW_SOCK_TCP,		///< TCP socket, connection established.
-	MW_SOCK_UDP			///< UDP socket
-} MwSockStat;
-/** \} */
-
+// TODO: Maybe this could be optimized by changing the data to define
+// command ranges, instead of commands
 /// Commands allowed while in IDLE state
 const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
@@ -294,7 +274,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
 	// Record socket number and mark channel as in use.
 	d.sock[addr->channel - 1] = s;
 	d.chan[addr->channel - 1] = TRUE;
-	d.ss[addr->channel - 1] = MW_SOCK_TCP;
+	d.ss[addr->channel - 1] = MW_SOCK_TCP_EST;
 	// Enable LSD channel
 	LsdChEnable(addr->channel);
 	return s;
