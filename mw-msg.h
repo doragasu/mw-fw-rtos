@@ -94,6 +94,50 @@ typedef struct {
 	uint16_t len;
 } MwMsgFlashRange;
 
+typedef struct {
+	uint32_t reserved;
+	uint16_t port;
+	uint8_t  channel;
+} MwMsgBind;
+
+/** \addtogroup MwApi MwState Possible states of the system state machine.
+ *  \{ */
+typedef enum {
+	MW_ST_INIT = 0,		///< Initialization state.
+	MW_ST_IDLE,			///< Idle state, until connected to an AP.
+	MW_ST_AP_JOIN,		///< Trying to join an access point.
+	MW_ST_SCAN,			///< Scanning access points.
+	MW_ST_READY,		///< Connected to The Internet.
+	MW_ST_TRANSPARENT,	///< Transparent communication state.
+	MW_ST_MAX			///< Limit number for state machine.
+} MwState;
+/** \} */
+
+/** \addtogroup MwApi MwSockStat Socket status.
+ *  \{ */
+typedef enum {
+	MW_SOCK_NONE = 0,	///< Unused socket.
+	MW_SOCK_TCP_LISTEN,	///< Socket bound and listening.
+	MW_SOCK_TCP_EST,	///< TCP socket, connection established.
+	MW_SOCK_UDP_READY	///< UDP socket ready for sending/receiving
+} MwSockStat;
+/** \} */
+
+/** \addtogroup MwApi MwSysStat System status
+ *  \{ */
+typedef union {
+	uint32_t st_flags;
+	struct {
+		MwState sys_stat:8;		///< System status
+		uint8_t online:1;		///< Module is connected to the Internet
+		uint8_t cfg_ok:1;		///< Configuration OK
+		uint8_t dt_ok:1;		///< Date and time synchronized at least once
+		uint16_t reserved:5;	///< Reserved flags
+		uint16_t ch_ev:16;		///< Channel flags with the pending event
+	};
+} MwMsgSysStat;
+/** \} */
+
 /** \addtogroup MwApi MwCmd Command sent to system FSM
  *  \{ */
 typedef struct {
@@ -112,6 +156,8 @@ typedef struct {
 		MwMsgDateTime datetime;
 		MwMsgFlashData flData;
 		MwMsgFlashRange flRange;
+		MwMsgBind bind;
+		MwMsgSysStat sysStat;
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
 		uint16_t rndLen;	// Length of the random buffer to fill
