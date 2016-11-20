@@ -94,47 +94,22 @@
 #define MW_CMD_TCP_CON		 10		///< Connect TCP socket
 #define MW_CMD_TCP_BIND		 11		///< Bind TCP socket to port
 #define MW_CMD_TCP_ACCEPT	 12		///< Accept incomint TCP connection
-#define MW_CMD_TCP_STAT		 13		///< Get TCP status
-#define MW_CMD_TCP_DISC		 14		///< Disconnect and free TCP socket
-#define MW_CMD_UDP_SET		 15		///< Configure UDP socket
-#define MW_CMD_UDP_STAT		 16		///< Get UDP status
-#define MW_CMD_UDP_CLR		 17		///< Clear and free UDP socket
-#define MW_CMD_PING			 18		///< Ping host
-#define MW_CMD_SNTP_CFG		 19		///< Configure SNTP service
-#define MW_CMD_DATETIME		 20		///< Get date and time
-#define MW_CMD_DT_SET        21		///< Set date and time
-#define MW_CMD_FLASH_WRITE	 22		///< Write to WiFi module flash
-#define MW_CMD_FLASH_READ	 23		///< Read from WiFi module flash
-#define MW_CMD_FLASH_ERASE	 24		///< Erase sector from WiFi flash
-#define MW_CMD_FLASH_ID 	 25		///< Get WiFi flash chip identifiers
-#define MW_CMD_SYS_STAT		 26		///< Get system status
-#define MW_CMD_DEF_CFG_SET	 27		///< Set default configuration
-#define MW_CMD_HRNG_GET		 28		///< Gets random numbers
+#define MW_CMD_TCP_DISC		 13		///< Disconnect and free TCP socket
+#define MW_CMD_UDP_SET		 14		///< Configure UDP socket
+#define MW_CMD_UDP_CLR		 15		///< Clear and free UDP socket
+#define MW_CMD_SOCK_STAT	 16		///< Get socket status
+#define MW_CMD_PING			 17		///< Ping host
+#define MW_CMD_SNTP_CFG		 18		///< Configure SNTP service
+#define MW_CMD_DATETIME		 19		///< Get date and time
+#define MW_CMD_DT_SET        20		///< Set date and time
+#define MW_CMD_FLASH_WRITE	 21		///< Write to WiFi module flash
+#define MW_CMD_FLASH_READ	 22		///< Read from WiFi module flash
+#define MW_CMD_FLASH_ERASE	 23		///< Erase sector from WiFi flash
+#define MW_CMD_FLASH_ID 	 24		///< Get WiFi flash chip identifiers
+#define MW_CMD_SYS_STAT		 25		///< Get system status
+#define MW_CMD_DEF_CFG_SET	 26		///< Set default configuration
+#define MW_CMD_HRNG_GET		 27		///< Gets random numbers
 #define MW_CMD_ERROR		255		///< Error command reply
-/** \} */
-
-/** \addtogroup MwApi MwState Possible states of the system state machine.
- *  \{ */
-typedef enum {
-	MW_ST_INIT = 0,		///< Initialization state.
-	MW_ST_IDLE,			///< Idle state, until connected to an AP.
-	MW_ST_AP_JOIN,		///< Trying to join an access point.
-	MW_ST_SCAN,			///< Scanning access points.
-	MW_ST_READY,		///< Connected to The Internet.
-	MW_ST_TRANSPARENT,	///< Transparent communication state.
-	MW_ST_MAX			///< Limit number for state machine.
-} MwState;
-/** \} */
-
-/** \addtogroup MwApi MwSockStat Socket status.
- *  \{ */
-typedef enum {
-	MW_SOCK_NONE = 0,	///< Unused socket.
-	MW_SOCK_TCP_LISTEN,	///< Socket bound and listening.
-	MW_SOCK_TCP_INCOM,	///< Incoming TCP connection.
-	MW_SOCK_TCP_EST,	///< TCP socket, connection established.
-	MW_SOCK_UDP			///< UDP socket
-} MwSockStat;
 /** \} */
 
 /** \addtogroup MwApi ApCfg Configuration needed to connect to an AP
@@ -143,19 +118,6 @@ typedef struct {
 	char ssid[MW_SSID_MAXLEN];
 	char pass[MW_PASS_MAXLEN];
 } ApCfg;
-/** \} */
-
-/** \addtogroup MwApi MwSysStat System status
- *  \{ */
-typedef struct {
-	MwState sys_stat:8;		///< System status
-	uint8_t pending:1;		///< Another event is pending
-	uint8_t online:1;		///< Module is connected to the Internet
-	uint8_t dt_ok:1;		///< Date and time synchronized at least once
-	uint8_t cfg_ok:1;		///< Configuration OK
-	uint8_t ch_ev:1;		///< Channel event available
-	uint8_t ch:4;			///< Channel with the pending event
-} MwSysStat;
 /** \} */
 
 /// Length of a command header (command and datalen fields)

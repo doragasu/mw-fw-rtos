@@ -64,8 +64,8 @@ const static uint8_t mwIdleCmds[] = {
 const static uint8_t mwReadyCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
 	MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_LEAVE, MW_CMD_TCP_CON,
-	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_STAT, MW_CMD_TCP_DISC,
-	MW_CMD_UDP_SET, MW_CMD_UDP_STAT, MW_CMD_UDP_CLR, MW_CMD_PING,
+	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_DISC,
+	MW_CMD_UDP_SET, MW_CMD_UDP_CLR, MW_CMD_SOCK_STAT, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
 	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
 	MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
@@ -395,6 +395,19 @@ void MwApJoin(uint8_t n) {
 	d.s = MW_ST_AP_JOIN;
 }
 
+void MwSysStatFill(MwCmd *rep) {
+	dprintf("Warning!, only sys_stat supported so far!\n");
+	rep->cmd = MW_CMD_OK;
+	rep->datalen = ByteSwapWord(sizeof(MwSysStat));
+	rep->sysStat.sys_stat = d.s;
+	rep->sysStat.pending = 0;
+	rep->sysStat.online = 0;
+	rep->sysStat.dt_ok = 0;
+	rep->sysStat.cfg_ok = 0;
+	rep->sysStat.ch_ev = 0;
+	rep->sysStat.ch = 0;
+}
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/
@@ -644,10 +657,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			dprintf("TCP_ACCEPT unimplemented\n");
 			break;
 
-		case MW_CMD_TCP_STAT:
-			dprintf("TCP_STAT unimplemented\n");
-			break;
-
 		case MW_CMD_TCP_DISC:
 			reply.datalen = 0;
 			// If channel number OK, disconnect the socket on requested channel
@@ -670,12 +679,12 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			dprintf("UDP_SET unimplemented\n");
 			break;
 
-		case MW_CMD_UDP_STAT:
-			dprintf("UDP_STAT unimplemented\n");
-			break;
-
 		case MW_CMD_UDP_CLR:
 			dprintf("UDP_CLR unimplemented\n");
+			break;
+
+		case MW_CMD_SOCK_STAT:
+			dprintf("SOCK_STAT unimplemented\n");
 			break;
 
 		case MW_CMD_PING:
@@ -792,7 +801,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SYS_STAT:
-			dprintf("SYS_STAT unimplemented\n");
+			MwSysStatFill(&reply);
+			LsdSend((uint8_t*)&reply, sizeof(MwSysStat) + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_DEF_CFG_SET:
@@ -953,9 +963,15 @@ static void MwFsm(MwFsmMsg *msg) {
 						d.s = MW_ST_IDLE;
 				}
 			} else if (MW_EV_SER_RX == msg->e) {
-				// The only rx event supported during AP_JOIN is AP_LEAVE
+				// The only rx events supported during AP_JOIN are AP_LEAVE
+				// and SYS_STAT
 				if (MW_CMD_AP_LEAVE == (b->cmd.cmd>>8)) {
 					MwFsmCmdProc((MwCmd*)b, b->len);
+				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
+					rep = (MwCmd*)msg->d;
+					MwSysStatFill(rep);
+					LsdSend((uint8_t*)rep, sizeof(MwSysStat) + MW_CMD_HEADLEN,
+							0);
 				} else {
 					dprintf("Command %d not allowed on AP_JOIN state\n",
 							b->cmd.cmd>>8);
