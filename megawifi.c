@@ -49,6 +49,14 @@
 /// Flash sector number where the configuration is stored
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
+/** \addtogroup MwApi MwFdOps FD set operations (add/remove)
+ *  \{ */
+typedef enum {
+	MW_FD_NONE = 0,		///< Do nothing
+	MW_FD_ADD,			///< Add socket to the FD set
+	MW_FD_REM			///< Remove socket from the FD set
+} MwFdOps;
+
 // TODO: Maybe this could be optimized by changing the data to define
 // command ranges, instead of commands
 /// Commands allowed while in IDLE state
@@ -113,17 +121,24 @@ typedef struct {
 typedef struct {
 	/// System status
 	MwState s;
-	/// Sockets.
-	int sock[MW_MAX_SOCK];
-	/// Channel in use (might be better to change this to a char, or even
-	/// remove it completely and use sock member.
-	int chan[MW_MAX_SOCK];
-	/// Socket status
+	/// Sockets associated with each channel. NOTE: the index to this array
+	/// must be the channel number minus 1 (as channel 0 is the control
+	/// channel and has no socket associated).
+	int8_t sock[MW_MAX_SOCK];
+	/// Socket status. As with sock[], index must be channel number - 1.
 	MwSockStat ss[MW_MAX_SOCK];
+	/// Channel associated with each socket (like sock[] but reversed). NOTE:
+	/// An extra socket placeholder is reserved because of server sockets that
+	/// might use a temporary additional socket during the accept() stage.
+	int8_t chan[MW_MAX_SOCK + 1];
 //	/// Timer used to update SNTP clock.
 //	os_timer_t sntpTimer;
 	/// FSM queue for event reception
 	xQueueHandle q;
+	/// File descriptor set for select()
+	fd_set fds;
+	/// Maximum socket identifier value
+	int fdMax;
 } MwData;
 /** \} */
 
@@ -136,6 +151,8 @@ static MwNvCfg cfg;
 static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
+/// Global system status flags
+MwMsgSysStat s;
 
 // Prints data of a WiFi station
 void PrintStationData(struct sdk_bss_info *bss) {
@@ -159,6 +176,20 @@ void MwBssListPrint(struct sdk_bss_info *bss) {
 		PrintStationData(bss);
 	}
 	dprintf("That's all!\n\n");
+}
+
+// Raises an event pending flag on requested channel
+inline void MwFsmRaiseChEvent(int ch) {
+	if ((ch < 1) || (ch >= LSD_MAX_CH)) return;
+
+	s.ch_ev |= 1<<ch;
+}
+
+// Clears an event pending flag on requested channel
+inline void MwFsmClearChEvent(int ch) {
+	if ((ch < 1) || (ch >= LSD_MAX_CH)) return;
+
+	s.ch_ev &= ~(1<<ch);
 }
 
 #ifdef _DEBUG_MSGS
@@ -228,14 +259,16 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
 	struct in_addr *raddr;
 	int err;
 	int s;
-	printf("Con. ch %d to %s:%s\n", addr->channel, addr->data, addr->dst_port);
+
+	dprintf("Con. ch %d to %s:%s\n", addr->channel, addr->data,
+			addr->dst_port);
 
 	// Check channel is valid and not in use.
 	if (addr->channel >= LSD_MAX_CH) {
 		dprintf("Requested unavailable channel %d\n", addr->channel);
 		return -1;
 	}
-	if (d.chan[addr->channel]) {
+	if (d.ss[addr->channel - 1]) {
 		dprintf("Requested already in-use channel %d\n", addr->channel);
 		return -1;
 	}
@@ -273,24 +306,100 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
     freeaddrinfo(res);
 	// Record socket number and mark channel as in use.
 	d.sock[addr->channel - 1] = s;
-	d.chan[addr->channel - 1] = TRUE;
 	d.ss[addr->channel - 1] = MW_SOCK_TCP_EST;
+	// Record channel number associated with socket
+	d.chan[s] = addr->channel;
+	// Add socket to the FD set and update maximum socket valud
+	FD_SET(s, &d.fds);
+	d.fdMax = MAX(s, d.fdMax);
+
 	// Enable LSD channel
 	LsdChEnable(addr->channel);
 	return s;
 }
 
-/// Closes a socket on the specified channel
-void MwFsmTcpDis(int ch) {
-	// TODO Might need to use a semaphore to access socket variables.
-	ch--;
-	d.ss[ch] = MW_SOCK_NONE;
-	d.chan[ch] = FALSE;
+int MwFsmTcpBind(MwMsgBind *b) {
+	struct sockaddr_in saddr;
+	socklen_t addrlen = sizeof(saddr);
+	int serv;
+	int optval = 1;
+	uint16_t port;
 
-	lwip_close(d.sock[ch]);
+	// Sanity checks
+	if ((b->channel < 1) || (b->channel > (LSD_MAX_CH - 1))) {
+		dprintf("Invalid channel %d requested!\n", b->channel);
+		return -1;
+	}
+	if ((d.sock[b->channel - 1] != -1) || (d.ss[b->channel - 1] |=
+				MW_SOCK_NONE)) {
+		dprintf("Channel %d already in use!\n", b->channel);
+	}
+
+	// Create socket, set options
+	if ((serv = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		dprintf("Could not create server socket!\n");
+		return -1;
+	}
+
+	if (lwip_setsockopt(serv, SOL_SOCKET, SO_REUSEADDR, &optval,
+				sizeof(int)) < 0) {
+		lwip_close(serv);
+		dprintf("setsockopt failed!\n");
+		return -1;
+	}
+
+	// Fill in address information
+	port = ByteSwapWord(b->port);
+	memset((char*)&saddr, 0, sizeof(saddr));
+	saddr.sin_family = AF_INET;
+	saddr.sin_len = addrlen;
+	saddr.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+	saddr.sin_port = lwip_htons(port);
+
+	// Bind to address
+	if (lwip_bind(serv, (struct sockaddr*)&saddr, sizeof(saddr)) < -1) {
+		lwip_close(serv);
+		dprintf("Bind to port %d failed!\n", port);
+		return -1;
+	}
+
+	// Listen for incoming connections
+	if (lwip_listen(serv, MW_MAX_SOCK) < 0) {
+		lwip_close(serv);
+		dprintf("Listen to port %d failed!\n", port);
+		return -1;
+	}
+	printf("Listening to port %d.\n", port);
+
+	// Fill in channel data
+	d.sock[b->channel - 1] = serv;
+	d.chan[serv] = b->channel;
+	d.ss[b->channel - 1] = MW_SOCK_TCP_LISTEN;
+
+	// Add listener to the FD set
+	FD_SET(serv, &d.fds);
+	d.fdMax = MAX(serv, d.fdMax);
+
+	return 0;
 }
 
-/// Creates a soacaket and binds it to a port
+/// Closes a socket on the specified channel
+void MwFsmTcpDis(int ch) {
+	// TODO Might need to use a mutex to access socket variables.
+
+	// Disable LSD channel
+	LsdChDisable(ch);
+	// Close socket, remove from file descriptor set and mark as unused
+	ch--;
+	d.ss[ch] = MW_SOCK_NONE;
+
+	lwip_close(d.sock[ch]);
+	FD_CLR(d.sock[ch], &d.fds);
+	d.chan[d.sock[ch]] = -1;	// No channe associated with this socket
+	d.sock[ch] = -1;			// No socket on this channel
+}
+
+/// Creates a socket and binds it to a port
 int MwTcpBind(int ch, uint16_t port) {
 	struct sockaddr_in saddr;	// Address of the server
 	int s;
@@ -450,14 +559,13 @@ void MwApJoin(uint8_t n) {
 void MwSysStatFill(MwCmd *rep) {
 	dprintf("Warning!, only sys_stat supported so far!\n");
 	rep->cmd = MW_CMD_OK;
-	rep->datalen = ByteSwapWord(sizeof(MwSysStat));
+	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.sys_stat = d.s;
-	rep->sysStat.pending = 0;
 	rep->sysStat.online = 0;
 	rep->sysStat.dt_ok = 0;
 	rep->sysStat.cfg_ok = 0;
 	rep->sysStat.ch_ev = 0;
-	rep->sysStat.ch = 0;
+	rep->sysStat.reserved = 0;
 }
 
 /************************************************************************//**
@@ -478,8 +586,13 @@ void MwInit(void) {
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
+	s.st_flags = 0;
 	memset(&d, 0, sizeof(d));
 	d.s = MW_ST_INIT;
+	for (i = 0; i < MW_MAX_SOCK; i++) {
+		d.sock[i] = -1;
+		d.chan[i] = -1;
+	}
 
 	// If default IP configuration saved, apply it
 	// NOTE: IP configuration can only be set in user_init() context.
@@ -566,7 +679,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_ECHO:		// Echo request
-			reply.cmd = ByteSwapWord(MW_CMD_OK);
+			reply.cmd = MW_CMD_OK;
 			reply.datalen = c->datalen;
 			dprintf("SENDING ECHO!\n");
 			// Send the command response
@@ -693,21 +806,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// Only works when on READY state
 			dprintf("TRYING TO CONNECT TCP SOCKET...\n");
 			reply.datalen = 0;
-			if (MW_ST_READY == d.s) {
-				reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
-						MW_CMD_ERROR):MW_CMD_OK;
-			} else reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
+					MW_CMD_ERROR):MW_CMD_OK;
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_TCP_BIND:
-			dprintf("Binding requested...\n");
 			reply.datalen = 0;
-			if (MW_ST_READY == d.s) {
-				reply.cmd = (MwTcpBind(c->bind.ch, ByteSwapWord(c->bind.port))
-						< 0)?
-					ByteSwapWord(MW_CMD_ERROR):MW_CMD_OK;
-			} else reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			reply.cmd = MwFsmTcpBind(&c->bind)?ByteSwapWord(MW_CMD_ERROR):
+				MW_CMD_OK;
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -719,7 +826,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datalen = 0;
 			// If channel number OK, disconnect the socket on requested channel
 			if ((c->data[0] > 0) && (c->data[0] <= LSD_MAX_CH) &&
-					d.chan[c->data[0] - 1]) {
+					d.ss[c->data[0] - 1]) {
 				dprintf("Closing socket %d from channel %d\n",
 						d.sock[c->data[0] - 1], c->data[0]);
 				MwFsmTcpDis(c->data[0]);
@@ -742,19 +849,18 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SOCK_STAT:
-			if ((c->ch < 1) || (c->ch > LSD_MAX_CH)) {
-				reply.datalen = 0;
-				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Invalid channel %d requested!\n", c->ch);
-				LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
-			} else {
+			if ((c->data[0] > 0) && (c->data[0] < LSD_MAX_CH)) {
+				// Send channel status and clear channel event flag
+				replen = 1;
 				reply.datalen = ByteSwapWord(1);
-				reply.data[0] = d.ss[c->ch - 1];
-				reply.cmd = MW_CMD_OK;
-				dprintf("Sending stat %d for channel %d\n", reply.data[0],
-						c->ch);
-				LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 1, 0);
+				reply.data[0] = (uint8_t)d.ss[c->data[0] - 1];
+				MwFsmClearChEvent(c->data[0]);
+			} else {
+				reply.datalen = replen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Requested unavailable channel!\n");
 			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_PING:
@@ -871,8 +977,12 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SYS_STAT:
-			MwSysStatFill(&reply);
-			LsdSend((uint8_t*)&reply, sizeof(MwSysStat) + MW_CMD_HEADLEN, 0);
+			reply.datalen = ByteSwapWord(sizeof(MwMsgSysStat));
+			reply.cmd = MW_CMD_OK;
+			// TODO WARNING, this might need byte swaps!
+			reply.sysStat = s;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + sizeof(MwMsgSysStat),
+				0);
 			break;
 
 		case MW_CMD_DEF_CFG_SET:
@@ -944,7 +1054,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 				}
 			} else {
 				// Forward message if channel is enabled.
-				if (b->ch < LSD_MAX_CH && d.chan[b->ch - 1]) {
+				if (b->ch < LSD_MAX_CH && d.ss[b->ch - 1]) {
 					if (send(d.sock[b->ch - 1], b->data, b->len, 0) != b->len) {
 						dprintf("DEB: CH %d socket send error!\n", b->ch);
 						// TODO throw error event
@@ -962,7 +1072,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 
 		case MW_EV_TCP_RECV:	///< Data received from TCP connection.
 			// Forward data to the appropiate channel of serial line
-//			LsdSend(, , d.chan[b->ch - 1]);
+//			LsdSend(, , d.ss[b->ch - 1]);
 			dprintf("TCP_RECV (not parsed)\n");
 			break;
 
@@ -1040,7 +1150,7 @@ static void MwFsm(MwFsmMsg *msg) {
 				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
 					MwSysStatFill(rep);
-					LsdSend((uint8_t*)rep, sizeof(MwSysStat) + MW_CMD_HEADLEN,
+					LsdSend((uint8_t*)rep, sizeof(MwMsgSysStat) + MW_CMD_HEADLEN,
 							0);
 				} else {
 					dprintf("Command %d not allowed on AP_JOIN state\n",
@@ -1102,38 +1212,63 @@ static void MwFsm(MwFsmMsg *msg) {
 	}
 }
 
-/// Polls sockets for data using select()
+// Accept incoming connection and get fds. Then close server socket (no more
+// connections allowed on this port unless explicitly requested again).
+int MwAccept(int sock, int ch) {
+	// Client address
+	struct sockaddr_in caddr;
+	socklen_t addrlen = sizeof(caddr);
+	int newsock;
+
+	if ((newsock = lwip_accept(sock, (struct sockaddr*)&caddr,
+					&addrlen)) < 0) {
+		dprintf("Accept failed for socket %d, channel %d\n", sock, ch);
+		return -1;
+	}
+	// Connection accepted, add to the FD set
+	dprintf("Socket %d, channel %d: established connection from %s.\n",
+			newsock, ch, inet_ntoa(caddr.sin_addr));
+	FD_SET(newsock, &d.fds);
+	d.fdMax = MAX(newsock, d.fdMax);
+	// Close server socket and remove it from the set
+	lwip_close(sock);
+	FD_CLR(sock, &d.fds);
+	// Update channel data
+	d.chan[newsock] = ch;
+	d.sock[ch - 1] = newsock;
+	d.ss[ch - 1] = MW_SOCK_TCP_EST;
+
+	return 0;
+}
+
+/// Polls sockets for data or incoming connections using select()
 /// \note Maybe MwWiFiStatPollTsk() task should be merged with this one.
 void MwFsmSockTsk(void *pvParameters) {
 	fd_set readset;
-	int fd;
-	int i, max, retval;
+	int i, ch, retval;
 	ssize_t recvd;
-	struct timeval tv;
-	struct sockaddr_in caddr;	// Address of the client
-	socklen_t addrlen = sizeof(struct sockaddr_in);
+	struct timeval tv = {
+		.tv_sec = 1,
+		.tv_usec = 0
+	};
 
 	//xQueueHandle *q = (xQueueHandle *)pvParameters;
 	UNUSED_PARAM(pvParameters);
-
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
+	FD_ZERO(&readset);
+	d.fdMax = -1;
 
 	while (1) {
 		// Update list of active sockets (NOTE: investigate if select also
 		// works with UDP sockets!)
-		// TODO: use a variable to update the list only when there is a change
-		FD_ZERO(&readset);
-		max = 0;
-		for (i = 0; i < MW_MAX_SOCK; i++) {
-			if (d.ss[i] > 0) {
-				FD_SET(d.sock[i], &readset);
-				max = MAX(max, d.sock[i]);
-			}
-		}
-		if ((retval = select(max + 1, &readset, NULL, NULL, &tv)) < 0) {
+		readset = d.fds;
+
+		// Wait until event or timeout
+		// TODO: d.fdMax is initialized to -1. How does select() behave if
+		// nfds = 0?
+		if ((retval = select(d.fdMax + 1, &readset, NULL, NULL, &tv)) < 0) {
 			// Error.
 			dprintf("select() completed with error!\n");
+			vTaskDelayMs(1000);
 			continue;
 		}
 		// If select returned 0, there was a timeout
@@ -1141,49 +1276,31 @@ void MwFsmSockTsk(void *pvParameters) {
 		dprintf("select()=%d\n", retval);
 		// Poll the socket for data, and forward through the associated
 		// channel.
-		for (i = 0; i < MW_MAX_SOCK; i++) {
-			if ((d.ss[i] > 0) && FD_ISSET(d.sock[i], &readset)) {
-				dprintf("Rx: sock=%d, ch=%d\n", d.sock[i], i + 1);
-				switch (d.ss[i]) {
-					case MW_SOCK_TCP_LISTEN:
-						// New connection
-						if ((fd = lwip_accept(d.sock[i], (struct sockaddr*)
-							&caddr, &addrlen)) < 0) {
-							dprintf("accept() failed!\n");
-							continue;
-						}
-						// Close server socket and assign newli created
-						// connection to previous one
-						lwip_close(d.sock[i]);
-						d.sock[i] = fd;
-						d.ss[i] = MW_SOCK_TCP_EST;
-						dprintf("Accepted connection from %s on socket %d\n",
-								inet_ntoa(caddr.sin_addr), fd);
-						break;
-					case MW_SOCK_TCP_EST:
-						if ((recvd = recv(d.sock[i], buf, LSD_MAX_LEN, 0))
-								< 0) {
-							// TODO: Throw error event
-							MwFsmTcpDis(i + 1);
-							dprintf("Error %d receiving from socket!\n", recvd);
-						} else if (0 == recvd) {
-							// Socket closed
-							// TODO: Throw event
-							MwFsmTcpDis(i + 1);
-							dprintf("Socket closed!\n");
-						} else {
-							LsdSend(buf, (uint16_t)recvd, i + 1);
-						}
-						break;
-					case MW_SOCK_UDP_READY:
-						dprintf("SOCK_UDP unsupported\n");
-						break;
-					default:
-						dprintf("Error on comm thread!\n");
+		for (i = 0; i <= d.fdMax; i++) {
+			if (FD_ISSET(i, &readset)) {
+				// Check if new connection or data received
+				ch = d.chan[i];
+				if (d.ss[ch - 1] != MW_SOCK_TCP_LISTEN) {
+					dprintf("Rx: sock=%d, ch=%d\n", i, ch);
+					if ((recvd = recv(i, buf, LSD_MAX_LEN, 0)) < 0) {
+						// Error!
+						MwFsmTcpDis(ch);
+						dprintf("Error %d receiving from socket!\n", recvd);
+					} else if (0 == recvd) {
+						// Socket closed
+						MwFsmTcpDis(ch);
+						dprintf("Socket closed!\n");
+						MwFsmRaiseChEvent(ch);
+					} else {
+						LsdSend(buf, (uint16_t)recvd, d.chan[i]);
+					}
+				} else {
+					// Incoming connection. Accept it.
+					MwAccept(i, ch);
+					MwFsmRaiseChEvent(ch);
 				}
-			} // if (socket_has_data)
-		} // for (socket list)
-		
+			}
+		}
 	} // while (1)
 }
 
