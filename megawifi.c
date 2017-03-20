@@ -742,7 +742,19 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SOCK_STAT:
-			dprintf("SOCK_STAT unimplemented\n");
+			if ((c->ch < 1) || (c->ch > LSD_MAX_CH)) {
+				reply.datalen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Invalid channel %d requested!\n", c->ch);
+				LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			} else {
+				reply.datalen = ByteSwapWord(1);
+				reply.data[0] = d.ss[c->ch - 1];
+				reply.cmd = MW_CMD_OK;
+				dprintf("Sending stat %d for channel %d\n", reply.data[0],
+						c->ch);
+				LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 1, 0);
+			}
 			break;
 
 		case MW_CMD_PING:
@@ -1148,9 +1160,6 @@ void MwFsmSockTsk(void *pvParameters) {
 						dprintf("Accepted connection from %s on socket %d\n",
 								inet_ntoa(caddr.sin_addr), fd);
 						break;
-					case MW_SOCK_TCP_INCOM:
-						dprintf("TCP_INCOM unsupported!\n");
-						break;
 					case MW_SOCK_TCP_EST:
 						if ((recvd = recv(d.sock[i], buf, LSD_MAX_LEN, 0))
 								< 0) {
@@ -1166,7 +1175,7 @@ void MwFsmSockTsk(void *pvParameters) {
 							LsdSend(buf, (uint16_t)recvd, i + 1);
 						}
 						break;
-					case MW_SOCK_UDP:
+					case MW_SOCK_UDP_READY:
 						dprintf("SOCK_UDP unsupported\n");
 						break;
 					default:

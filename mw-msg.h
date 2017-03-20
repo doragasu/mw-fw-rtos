@@ -64,9 +64,8 @@ typedef enum {
 typedef enum {
 	MW_SOCK_NONE = 0,	///< Unused socket.
 	MW_SOCK_TCP_LISTEN,	///< Socket bound and listening.
-	MW_SOCK_TCP_INCOM,	///< Incoming TCP connection.
 	MW_SOCK_TCP_EST,	///< TCP socket, connection established.
-	MW_SOCK_UDP			///< UDP socket
+	MW_SOCK_UDP_READY	///< UDP socket
 } MwSockStat;
 /** \} */
 
