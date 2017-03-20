@@ -253,7 +253,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
     raddr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
     dprintf("DNS lookup succeeded. IP=%s\n", inet_ntoa(*raddr));
 
-    s = socket(res->ai_family, res->ai_socktype, 0);
+    s = lwip_socket(res->ai_family, res->ai_socktype, 0);
     if(s < 0) {
         dprintf("... Failed to allocate socket.\n");
         freeaddrinfo(res);
@@ -288,6 +288,58 @@ void MwFsmTcpDis(int ch) {
 	d.chan[ch] = FALSE;
 
 	lwip_close(d.sock[ch]);
+}
+
+/// Creates a soacaket and binds it to a port
+int MwTcpBind(int ch, uint16_t port) {
+	struct sockaddr_in saddr;	// Address of the server
+	int s;
+	int optval = 1;
+	socklen_t addrlen = sizeof(struct sockaddr_in);
+
+	printf("Bind ch %d to port %d.\n", ch, port);
+
+	// Check channel is valid and not in use.
+	if (ch >= LSD_MAX_CH) {
+		dprintf("Requested unavailable channel %d\n", ch);
+		return -1;
+	}
+	if (d.chan[ch]) {
+		dprintf("Requested already in-use channel %d\n", ch);
+		return -1;
+	}
+
+	if ((s = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		dprintf("Could not create listener!");
+	dprintf("Created listener socket number %d.\n", s);
+	// Allow address reuse
+	if (lwip_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &optval,
+				sizeof(int)) < 0) dprintf("setsockopt() failed!");
+
+	// Fill in address information
+	memset((char*)&saddr, 0, sizeof(saddr));
+	saddr.sin_family = AF_INET;
+	saddr.sin_len = addrlen;
+	saddr.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+	saddr.sin_port = lwip_htons(port);
+
+	// Bind to address
+	if (lwip_bind(s, (struct sockaddr*)&saddr, sizeof(saddr)) < -1) {
+		lwip_close(s);
+		dprintf("bind() failed!");
+	}
+
+	// Listen for incoming connections
+	if (lwip_listen(s, 1) < 0) dprintf("listen() failed!");
+	printf("Server socket created!\n");
+	// Record socket number and mark channel as in use.
+	d.sock[ch - 1] = s;
+	d.chan[ch - 1] = TRUE;
+	d.ss[ch - 1] = MW_SOCK_TCP_LISTEN;
+	// Enable LSD channel
+	LsdChEnable(ch);
+
+	return s;
 }
 
 /// Close all opened sockets
@@ -645,12 +697,18 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
 						MW_CMD_ERROR):MW_CMD_OK;
 			} else reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			reply.cmd = ByteSwapWord(reply.cmd);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_TCP_BIND:
-			dprintf("TCP_BIND unimplemented\n");
+			dprintf("Binding requested...\n");
+			reply.datalen = 0;
+			if (MW_ST_READY == d.s) {
+				reply.cmd = (MwTcpBind(c->bind.ch, ByteSwapWord(c->bind.port))
+						< 0)?
+					ByteSwapWord(MW_CMD_ERROR):MW_CMD_OK;
+			} else reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_TCP_ACCEPT:
@@ -1036,9 +1094,12 @@ static void MwFsm(MwFsmMsg *msg) {
 /// \note Maybe MwWiFiStatPollTsk() task should be merged with this one.
 void MwFsmSockTsk(void *pvParameters) {
 	fd_set readset;
+	int fd;
 	int i, max, retval;
 	ssize_t recvd;
 	struct timeval tv;
+	struct sockaddr_in caddr;	// Address of the client
+	socklen_t addrlen = sizeof(struct sockaddr_in);
 
 	//xQueueHandle *q = (xQueueHandle *)pvParameters;
 	UNUSED_PARAM(pvParameters);
@@ -1071,17 +1132,45 @@ void MwFsmSockTsk(void *pvParameters) {
 		for (i = 0; i < MW_MAX_SOCK; i++) {
 			if ((d.ss[i] > 0) && FD_ISSET(d.sock[i], &readset)) {
 				dprintf("Rx: sock=%d, ch=%d\n", d.sock[i], i + 1);
-				if ((recvd = recv(d.sock[i], buf, LSD_MAX_LEN, 0)) < 0) {
-					// TODO: Throw error event
-					MwFsmTcpDis(i + 1);
-					dprintf("Error %d receiving from socket!\n", recvd);
-				} else if (0 == recvd) {
-					// Socket closed
-					// TODO: Throw event
-					MwFsmTcpDis(i + 1);
-					dprintf("Socket closed!\n");
-				} else {
-					LsdSend(buf, (uint16_t)recvd, i + 1);
+				switch (d.ss[i]) {
+					case MW_SOCK_TCP_LISTEN:
+						// New connection
+						if ((fd = lwip_accept(d.sock[i], (struct sockaddr*)
+							&caddr, &addrlen)) < 0) {
+							dprintf("accept() failed!\n");
+							continue;
+						}
+						// Close server socket and assign newli created
+						// connection to previous one
+						lwip_close(d.sock[i]);
+						d.sock[i] = fd;
+						d.ss[i] = MW_SOCK_TCP_EST;
+						dprintf("Accepted connection from %s on socket %d\n",
+								inet_ntoa(caddr.sin_addr), fd);
+						break;
+					case MW_SOCK_TCP_INCOM:
+						dprintf("TCP_INCOM unsupported!\n");
+						break;
+					case MW_SOCK_TCP_EST:
+						if ((recvd = recv(d.sock[i], buf, LSD_MAX_LEN, 0))
+								< 0) {
+							// TODO: Throw error event
+							MwFsmTcpDis(i + 1);
+							dprintf("Error %d receiving from socket!\n", recvd);
+						} else if (0 == recvd) {
+							// Socket closed
+							// TODO: Throw event
+							MwFsmTcpDis(i + 1);
+							dprintf("Socket closed!\n");
+						} else {
+							LsdSend(buf, (uint16_t)recvd, i + 1);
+						}
+						break;
+					case MW_SOCK_UDP:
+						dprintf("SOCK_UDP unsupported\n");
+						break;
+					default:
+						dprintf("Error on comm thread!\n");
 				}
 			} // if (socket_has_data)
 		} // for (socket list)

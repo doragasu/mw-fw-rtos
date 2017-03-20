@@ -91,6 +91,12 @@ typedef struct {
 	char data[MW_CMD_MAX_BUFLEN - 6 - 6 - 1];
 } MwMsgInAddr;
 
+typedef struct {
+	uint32_t reserved;
+	uint16_t port;
+	uint8_t ch;
+} MwMsgBind;
+
 /// AP configuration message
 typedef struct {
 	uint8_t cfgNum;
@@ -150,6 +156,7 @@ typedef struct {
 		MwMsgFlashData flData;
 		MwMsgFlashRange flRange;
 		MwSysStat sysStat;
+		MwMsgBind bind;
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
 		uint16_t rndLen;	// Length of the random buffer to fill
