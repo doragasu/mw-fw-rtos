@@ -1292,6 +1292,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						dprintf("Socket closed!\n");
 						MwFsmRaiseChEvent(ch);
 					} else {
+						dprintf("WF->MD %d bytes\n", recvd);
 						LsdSend(buf, (uint16_t)recvd, d.chan[i]);
 					}
 				} else {
