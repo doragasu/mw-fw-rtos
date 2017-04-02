@@ -1238,6 +1238,9 @@ int MwAccept(int sock, int ch) {
 	d.sock[ch - 1] = newsock;
 	d.ss[ch - 1] = MW_SOCK_TCP_EST;
 
+	// Enable channel to send/receive data
+	LsdChEnable(ch);
+
 	return 0;
 }
 
@@ -1292,6 +1295,8 @@ void MwFsmSockTsk(void *pvParameters) {
 						dprintf("Socket closed!\n");
 						MwFsmRaiseChEvent(ch);
 					} else {
+						dprintf("%02X %02X %02X %02X: ", buf[0], buf[1],
+								buf[2], buf[3]);
 						dprintf("WF->MD %d bytes\n", recvd);
 						LsdSend(buf, (uint16_t)recvd, d.chan[i]);
 					}

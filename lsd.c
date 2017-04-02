@@ -143,8 +143,14 @@ int LsdChDisable(uint8_t ch) {
 int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
 	uint8_t scratch[3];
 
-	if (len > MW_MSG_MAX_BUFLEN || ch >= LSD_MAX_CH) return -1;
-	if (!d.en[ch]) return 0;
+	if (len > MW_MSG_MAX_BUFLEN || ch >= LSD_MAX_CH) {
+		dprintf("Invalid length (%d) or channel (%d).\n", len, ch);
+		return -1;
+	}
+	if (!d.en[ch]) {
+		dprintf("LsdSend: Channel %d not enabled.\n", ch);
+		return 0;
+	}
 
 	dprintf("Sending %d bytes\n", len);
 	scratch[0] = LSD_STX_ETX;
