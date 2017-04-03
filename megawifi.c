@@ -386,9 +386,6 @@ int MwFsmTcpBind(MwMsgBind *b) {
 /// Closes a socket on the specified channel
 void MwFsmTcpDis(int ch) {
 	// TODO Might need to use a mutex to access socket variables.
-
-	// Disable LSD channel
-	LsdChDisable(ch);
 	// Close socket, remove from file descriptor set and mark as unused
 	ch--;
 	d.ss[ch] = MW_SOCK_NONE;
@@ -459,6 +456,7 @@ void MwFsmCloseAll(void) {
 		if (d.ss[i] > 0) {
 			dprintf("Closing sock %d on ch %d\n", d.sock[i], i + 1);
 			MwFsmTcpDis(i + 1);
+			LsdChDisable(i + 1);
 		}
 	}
 }
@@ -826,6 +824,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				dprintf("Closing socket %d from channel %d\n",
 						d.sock[c->data[0] - 1], c->data[0]);
 				MwFsmTcpDis(c->data[0]);
+				LsdChDisable(c->data[0]);
 				reply.cmd = MW_CMD_OK;
 			} else {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
@@ -1286,6 +1285,7 @@ void MwFsmSockTsk(void *pvParameters) {
 					if ((recvd = recv(i, buf, LSD_MAX_LEN, 0)) < 0) {
 						// Error!
 						MwFsmTcpDis(ch);
+						LsdChDisable(ch);
 						dprintf("Error %d receiving from socket!\n", recvd);
 					} else if (0 == recvd) {
 						// Socket closed
@@ -1295,6 +1295,10 @@ void MwFsmSockTsk(void *pvParameters) {
 						MwFsmTcpDis(ch);
 						dprintf("Socket closed!\n");
 						MwFsmRaiseChEvent(ch);
+						// Send a 0-byte frame for the receiver to wake up and
+						// notice the socket close
+						LsdSend(NULL, 0, d.chan[i]);
+						LsdChDisable(ch);
 					} else {
 						dprintf("%02X %02X %02X %02X: ", buf[0], buf[1],
 								buf[2], buf[3]);
