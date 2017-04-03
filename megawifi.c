@@ -120,7 +120,7 @@ typedef struct {
  *  \{ */
 typedef struct {
 	/// System status
-	MwState s;
+	MwMsgSysStat s;
 	/// Sockets associated with each channel. NOTE: the index to this array
 	/// must be the channel number minus 1 (as channel 0 is the control
 	/// channel and has no socket associated).
@@ -529,6 +529,7 @@ int MwCfgLoad(void) {
 			((uint32_t)&cfg), md5);
 	if (!memcmp(cfg.md5, md5, 16)) {
 		// MD5 test passed, return with loaded configuration
+		d.s.cfg_ok = TRUE;
 		dprintf("Configuration loaded from flash.\n");
 		return 0;
 	}
@@ -553,19 +554,14 @@ void MwApJoin(uint8_t n) {
 	sdk_wifi_station_set_config(&stcfg);
 	sdk_wifi_station_connect();
 	dprintf("AP JOIN!\n");
-	d.s = MW_ST_AP_JOIN;
+	d.s.sys_stat = MW_ST_AP_JOIN;
 }
 
 void MwSysStatFill(MwCmd *rep) {
-//	dprintf("Warning!, only sys_stat and online supported so far!\n");
+//	Warning: dt_ok not supported yet
 	rep->cmd = MW_CMD_OK;
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
-	rep->sysStat.sys_stat = d.s;
-	rep->sysStat.online = d.s >= MW_ST_READY?TRUE:FALSE;
-	rep->sysStat.dt_ok = 0;
-	rep->sysStat.cfg_ok = 0;
-	rep->sysStat.ch_ev = 0;
-	rep->sysStat.reserved = 0;
+	rep->sysStat.st_flags = d.s.st_flags;
 }
 
 /************************************************************************//**
@@ -588,7 +584,7 @@ void MwInit(void) {
 	// Set default values for global variables
 	s.st_flags = 0;
 	memset(&d, 0, sizeof(d));
-	d.s = MW_ST_INIT;
+	d.s.sys_stat = MW_ST_INIT;
 	for (i = 0; i < MW_MAX_SOCK; i++) {
 		d.sock[i] = -1;
 		d.chan[i] = -1;
@@ -693,8 +689,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_AP_SCAN:
 			// Only works when on IDLE state.
-			if (MW_ST_IDLE == d.s) {
-				d.s = MW_ST_SCAN;
+			if (MW_ST_IDLE == d.s.sys_stat) {
+				d.s.sys_stat = MW_ST_SCAN;
 	    		dprintf("SCAN!\n");
 	    		sdk_wifi_station_scan(NULL, (sdk_scan_done_cb_t)
 						ScanCompleteCb);
@@ -795,7 +791,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			MwFsmCloseAll();
 			// Disconnect and switch to IDLE state
 			sdk_wifi_station_disconnect();
-			d.s = MW_ST_IDLE;
+			d.s.sys_stat = MW_ST_IDLE;
 			dprintf("IDLE!\n");
 			reply.cmd = MW_OK;
 			reply.datalen = 0;
@@ -1101,7 +1097,7 @@ static void MwFsm(MwFsmMsg *msg) {
 	MwMsgBuf *b = msg->d;
 	MwCmd *rep;
 
-	switch (d.s) {
+	switch (d.s.sys_stat) {
 		case MW_ST_INIT:
 			// Ignore all events excepting the INIT DONE one
 			if (msg->e == MW_EV_INIT_DONE) {
@@ -1113,7 +1109,7 @@ static void MwFsm(MwFsmMsg *msg) {
 					// TODO: Maybe we should set an AP join timeout.
 				} else {
 					dprintf("No default AP found.\nIDLE!\n");
-					d.s = MW_ST_IDLE;
+					d.s.sys_stat = MW_ST_IDLE;
 				}
 			}
 			break;
@@ -1125,7 +1121,8 @@ static void MwFsm(MwFsmMsg *msg) {
 					case STATION_GOT_IP:
 						// Connected!
 						dprintf("READY!\n");
-						d.s = MW_ST_READY;
+						d.s.sys_stat = MW_ST_READY;
+						d.s.online = TRUE;
 						break;
 
 					case STATION_CONNECTING:
@@ -1139,7 +1136,7 @@ static void MwFsm(MwFsmMsg *msg) {
 						// Error
 						sdk_wifi_station_disconnect();
 						dprintf("Could not connect to AP!\nIDLE!\n");
-						d.s = MW_ST_IDLE;
+						d.s.sys_stat = MW_ST_IDLE;
 				}
 			} else if (MW_EV_SER_RX == msg->e) {
 				// The only rx events supported during AP_JOIN are AP_LEAVE
@@ -1190,7 +1187,7 @@ static void MwFsm(MwFsmMsg *msg) {
 				LsdSend((uint8_t*)rep, ByteSwapWord(rep->datalen) +
 						MW_CMD_HEADLEN, 0);
 				free(rep);
-				d.s = MW_ST_IDLE;
+				d.s.sys_stat = MW_ST_IDLE;
 				dprintf("IDLE!\n");
 			}
 			break;
