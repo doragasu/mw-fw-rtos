@@ -557,11 +557,11 @@ void MwApJoin(uint8_t n) {
 }
 
 void MwSysStatFill(MwCmd *rep) {
-	dprintf("Warning!, only sys_stat supported so far!\n");
+//	dprintf("Warning!, only sys_stat and online supported so far!\n");
 	rep->cmd = MW_CMD_OK;
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.sys_stat = d.s;
-	rep->sysStat.online = 0;
+	rep->sysStat.online = d.s >= MW_ST_READY?TRUE:FALSE;
 	rep->sysStat.dt_ok = 0;
 	rep->sysStat.cfg_ok = 0;
 	rep->sysStat.ch_ev = 0;
@@ -977,10 +977,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SYS_STAT:
-			reply.datalen = ByteSwapWord(sizeof(MwMsgSysStat));
-			reply.cmd = MW_CMD_OK;
-			// TODO WARNING, this might need byte swaps!
-			reply.sysStat = s;
+			MwSysStatFill(&reply);
+			dprintf("%02X %02X %02X %02X\n", reply.data[0], reply.data[1],
+					reply.data[2], reply.data[3]);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + sizeof(MwMsgSysStat),
 				0);
 			break;
@@ -1150,6 +1149,8 @@ static void MwFsm(MwFsmMsg *msg) {
 				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
 					MwSysStatFill(rep);
+					dprintf("%02X %02X %02X %02X\n", rep->data[0],
+							rep->data[1], rep->data[2], rep->data[3]);
 					LsdSend((uint8_t*)rep, sizeof(MwMsgSysStat) + MW_CMD_HEADLEN,
 							0);
 				} else {
@@ -1291,6 +1292,9 @@ void MwFsmSockTsk(void *pvParameters) {
 						dprintf("Error %d receiving from socket!\n", recvd);
 					} else if (0 == recvd) {
 						// Socket closed
+						// TODO: A listen on a socket closed, should trigger
+						// a 0-byte reception, for the client to be able to
+						// check server state and close the connection.
 						MwFsmTcpDis(ch);
 						dprintf("Socket closed!\n");
 						MwFsmRaiseChEvent(ch);
