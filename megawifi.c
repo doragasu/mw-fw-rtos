@@ -1297,7 +1297,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						MwFsmRaiseChEvent(ch);
 						// Send a 0-byte frame for the receiver to wake up and
 						// notice the socket close
-						LsdSend(NULL, 0, d.chan[i]);
+						LsdSend(NULL, 0, ch);
 						LsdChDisable(ch);
 					} else {
 						dprintf("%02X %02X %02X %02X: ", buf[0], buf[1],
