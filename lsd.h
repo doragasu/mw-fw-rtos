@@ -73,7 +73,9 @@
 #define LSD_RECV_PRIO		2
 
 /// Maximum data payload length
-#define LSD_MAX_LEN		 4095
+/// TODO IMPORTANT: This should be dynamically configurable!
+//#define LSD_MAX_LEN		 4095
+#define LSD_MAX_LEN		 1440
 
 /************************************************************************//**
  * Module initialization. Call this function before any other one in this

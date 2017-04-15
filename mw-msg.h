@@ -42,7 +42,8 @@ typedef enum {
 /** \} */
 
 /// Maximum buffer length (bytes)
-#define MW_MSG_MAX_BUFLEN	512
+#define MW_MSG_MAX_BUFLEN	1440
+//#define MW_MSG_MAX_BUFLEN	1376
 
 #define MW_CMD_MAX_BUFLEN	(MW_MSG_MAX_BUFLEN - 4)
 

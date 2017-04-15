@@ -1138,10 +1138,20 @@ static void MwFsm(MwFsmMsg *msg) {
 						d.s.sys_stat = MW_ST_IDLE;
 				}
 			} else if (MW_EV_SER_RX == msg->e) {
-				// The only rx events supported during AP_JOIN are AP_LEAVE
-				// and SYS_STAT
+				// The only rx events supported during AP_JOIN are AP_LEAVE,
+				// VERSION_GET and SYS_STAT
 				if (MW_CMD_AP_LEAVE == (b->cmd.cmd>>8)) {
 					MwFsmCmdProc((MwCmd*)b, b->len);
+				} else if (MW_CMD_VERSION) {
+					rep = (MwCmd*)msg->d;
+					rep->cmd = MW_CMD_OK;
+					rep->datalen = ByteSwapWord(2 + sizeof(MW_FW_VARIANT) - 1);
+					rep->data[0] = MW_FW_VERSION_MAJOR;
+					rep->data[1] = MW_FW_VERSION_MINOR;
+					memcpy(rep->data + 2, MW_FW_VARIANT,
+							sizeof(MW_FW_VARIANT) - 1);
+					LsdSend((uint8_t*)rep, ByteSwapWord(rep->datalen) +
+							MW_CMD_HEADLEN, 0);
 				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
 					MwSysStatFill(rep);
