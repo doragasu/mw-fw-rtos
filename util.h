@@ -34,7 +34,7 @@
     ((((uint64_t)(qw)) & 0xFF00)<< 40)   | (((uint64_t)(qw))<<56))
 
 /// Puts a task to sleep for some milliseconds (requires FreeRTOS).
-#define vTaskDelayMs(ms)	vTaskDelay((ms)/portTICK_RATE_MS)
+#define vTaskDelayMs(ms)	vTaskDelay((ms)/portTICK_PERIOD_MS)
 
 #if !defined(MAX)
 /// Returns the maximum of two numbers

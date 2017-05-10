@@ -1,3 +1,2 @@
 PRINTF_SCANF_FLOAT_SUPPORT = 0
-STDOUT_UART=1
 ESPTOOL=python2 $(HOME)/src/esp8266/esptool/esptool.py

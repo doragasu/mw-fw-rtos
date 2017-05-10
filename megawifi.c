@@ -134,7 +134,7 @@ typedef struct {
 //	/// Timer used to update SNTP clock.
 //	os_timer_t sntpTimer;
 	/// FSM queue for event reception
-	xQueueHandle q;
+	QueueHandle_t q;
 	/// File descriptor set for select()
 	fd_set fds;
 	/// Maximum socket identifier value
@@ -612,13 +612,13 @@ void MwInit(void) {
 	// Create system queue
     d.q  = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg));
   	// Create FSM task
-	xTaskCreate(MwFsmTsk, (signed char*)"FSM", MW_FSM_STACK_LEN, &d.q,
+	xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
 			MW_FSM_PRIO, NULL);
 	// Create task for receiving data from sockets
-	xTaskCreate(MwFsmSockTsk, (signed char*)"SCK", MW_SOCK_STACK_LEN, &d.q,
+	xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
 			MW_SOCK_PRIO, NULL);
 	// Create task for polling WiFi status
-	xTaskCreate(MwWiFiStatPollTsk, (signed char*)"WPOL", MW_WPOLL_STACK_LEN,
+	xTaskCreate(MwWiFiStatPollTsk, "WPOL", MW_WPOLL_STACK_LEN,
 			&d.q, MW_WPOLL_PRIO, NULL);
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
@@ -1262,7 +1262,7 @@ void MwFsmSockTsk(void *pvParameters) {
 		.tv_usec = 0
 	};
 
-	//xQueueHandle *q = (xQueueHandle *)pvParameters;
+	//QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 	UNUSED_PARAM(pvParameters);
 	FD_ZERO(&readset);
 	d.fdMax = -1;
@@ -1326,7 +1326,7 @@ void MwFsmSockTsk(void *pvParameters) {
 }
 
 void MwFsmTsk(void *pvParameters) {
-	xQueueHandle *q = (xQueueHandle *)pvParameters;
+	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 	MwFsmMsg m;
 
 	while(1) {
@@ -1345,7 +1345,7 @@ void MwFsmTsk(void *pvParameters) {
 void MwWiFiStatPollTsk(void *pvParameters) {
 	uint8_t con_stat, prev_con_stat;
 	MwFsmMsg m;
-	xQueueHandle *q = (xQueueHandle *)pvParameters;
+	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 
 	m.e = MW_EV_WIFI;
 
