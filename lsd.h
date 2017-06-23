@@ -81,7 +81,7 @@
  * Module initialization. Call this function before any other one in this
  * module.
  ****************************************************************************/
-void LsdInit(xQueueHandle *q);
+void LsdInit(QueueHandle_t *q);
 
 /************************************************************************//**
  * Enables a channel to start reception and be able to send data.

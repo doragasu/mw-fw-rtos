@@ -46,7 +46,7 @@ typedef enum {
  *  \{ */
 typedef struct {
 	MwMsgBuf rx[LSD_BUF_FRAMES];	///< Reception buffers.
-	xSemaphoreHandle sem;			///< Semaphore to control buffers
+	SemaphoreHandle_t sem;			///< Semaphore to control buffers
 	LsdState rxs;					///< Reception state
 	uint8_t en[LSD_MAX_CH];			///< Channel enable
 	uint16_t pos;					///< Position in current buffer
@@ -86,14 +86,14 @@ void Uart0AutoRtsCtsCfg(void) {
  * Module initialization. Call this function before any other one in this
  * module.
  ****************************************************************************/
-void LsdInit(xQueueHandle *q) {
+void LsdInit(QueueHandle_t *q) {
 	// Set variables to default values
 	memset(&d, 0, sizeof(LsdData));
 	d.rxs = LSD_ST_STX_WAIT;
 	// Create semaphore used to handle receive buffers
 	d.sem = xSemaphoreCreateCounting(LSD_BUF_FRAMES, LSD_BUF_FRAMES);
 	// Create receive task
-		xTaskCreate(LsdRecvTsk, (signed char*)"LSDR", 256, q, LSD_RECV_PRIO, NULL);
+		xTaskCreate(LsdRecvTsk, "LSDR", 256, q, LSD_RECV_PRIO, NULL);
 	// Configure UARTs
 	uart_set_baud(LSD_UART, LSD_UART_BR);
 	Uart0AutoRtsCtsCfg();
@@ -262,7 +262,7 @@ void LsdRecvTsk(void *pvParameters) {
 	bool receiving;
 	uint8_t recv;
 
-	xQueueHandle *q = (xQueueHandle *)pvParameters;
+	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 
 	while (1) {
 		// Grab receive buffer semaphore
