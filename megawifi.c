@@ -42,6 +42,7 @@
 #include "megawifi.h"
 #include "lsd.h"
 #include "util.h"
+#include "led.h"
 
 /// Configuration address, stored on the last sector 4 KiB of the first 512 KiB
 #define MW_CFG_FLASH_ADDR	((512 - 4) * 1024)
@@ -1256,6 +1257,7 @@ int MwAccept(int sock, int ch) {
 void MwFsmSockTsk(void *pvParameters) {
 	fd_set readset;
 	int i, ch, retval;
+	int led = 0;
 	ssize_t recvd;
 	struct timeval tv = {
 		.tv_sec = 1,
@@ -1268,6 +1270,7 @@ void MwFsmSockTsk(void *pvParameters) {
 	d.fdMax = -1;
 
 	while (1) {
+		gpio_write(LED_GPIO_PIN, (led++)&1);
 		// Update list of active sockets (NOTE: investigate if select also
 		// works with UDP sockets!)
 		readset = d.fds;

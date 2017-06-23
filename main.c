@@ -3,14 +3,21 @@
 #include "esp/uart.h"
 #include "megawifi.h"
 #include <stdio.h>
+// FreeRTOS
+#include <FreeRTOS.h>
+#include <task.h>
+#include <queue.h>
 
-#ifndef DEBUG_UART
+//#ifndef DEBUG_UART
 #define DEBUG_UART 1
-#endif
+//#endif
 
-long UartWriteFunction(struct _reent *r, int fd, const char *ptr, int len ) {
+//long _write_stdout_r(struct _reent *r, int fd, const char *ptr, int len ) {
+long UartWriteFunction(struct _reent *r, int fd, const char *ptr,
+		int len ) {
+	(void)r;
+	(void)fd;
     for(int i = 0; i < len; i++) {
-        /* Auto convert CR to CRLF, ignore other LFs (compatible with Espressif SDK behaviour) */
         if(ptr[i] == '\r')
             continue;
         if(ptr[i] == '\n')
@@ -22,7 +29,7 @@ long UartWriteFunction(struct _reent *r, int fd, const char *ptr, int len ) {
 
 void user_init(void) {
 	// Set callback for stdout to be redirected to the UART used for debug
-	set_write_stdout(UartWriteFunction);
+	set_write_stdout(&UartWriteFunction);
 	// Initialize UART used for debugging
 	uart_set_baud(DEBUG_UART, 115200);
 	printf("=== MeGaWiFi firmware version %d.%d-%s ===\n",
@@ -33,4 +40,6 @@ void user_init(void) {
 	LedOn();
 	// Initialize MeGaWiFi system and FSM
 	MwInit();
+
+	while(1) vTaskDelay((2000)/portTICK_PERIOD_MS);
 }
