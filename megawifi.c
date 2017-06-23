@@ -707,7 +707,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				strncpy(cfg.ap[tmp].ssid, c->apCfg.ssid, MW_SSID_MAXLEN);
 				strncpy(cfg.ap[tmp].pass, c->apCfg.pass, MW_PASS_MAXLEN);
 				cfg.defaultAp = tmp;
-				// TODO Check return value
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				} else {
@@ -767,6 +766,23 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.ipCfg.dns2 = cfg.dns[tmp][1];
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
+		case MW_CMD_DEF_AP_GET:
+			break;
+
+		case MW_CMD_DEF_AP_SET:
+			reply.datalen = 0;
+			tmp = c->data[0];
+			if (tmp < MW_NUM_AP_CFGS) {
+				cfg.defaultAp = tmp;
+				if (MwNvCfgSave() != 0) {
+					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				} else {
+					reply.cmd = MW_CMD_OK;
+				}
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_AP_JOIN:
