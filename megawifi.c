@@ -770,6 +770,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_DEF_AP_GET:
+			reply.datalen = ByteSwapWord(1);
+			reply.cmd = MW_CMD_OK;
+			reply.data[0] = cfg.defaultAp;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 1);
 			break;
 
 		case MW_CMD_DEF_AP_SET:
