@@ -769,14 +769,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
-		case MW_CMD_DEF_AP_GET:
-			reply.datalen = ByteSwapWord(1);
-			reply.cmd = MW_CMD_OK;
-			reply.data[0] = cfg.defaultAp;
-			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 1);
-			break;
-
-		case MW_CMD_DEF_AP_SET:
+		case MW_CMD_DEF_AP_CFG:
 			reply.datalen = 0;
 			tmp = c->data[0];
 			if (tmp < MW_NUM_AP_CFGS) {
@@ -788,6 +781,13 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_DEF_AP_CFG_GET:
+			reply.datalen = ByteSwapWord(1);
+			reply.cmd = MW_CMD_OK;
+			reply.data[0] = cfg.defaultAp;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 1);
 			break;
 
 		case MW_CMD_AP_JOIN:

@@ -90,7 +90,7 @@
 #define MW_CMD_IP_CFG			  6		///< Configure IPv4
 #define MW_CMD_IP_CFG_GET		  7		///< Get IPv4 configuration
 #define MW_CMD_DEF_AP_CFG		  8		///< Set default AP configuration
-#define MW_CMD_DEF_AP_GET		  9		///< Get default AP configuration
+#define MW_CMD_DEF_AP_CFG_GET	  9		///< Get default AP configuration
 #define MW_CMD_AP_JOIN			 10		///< Join access point
 #define MW_CMD_AP_LEAVE			 11		///< Leave previously joined AP
 #define MW_CMD_TCP_CON			 12		///< Connect TCP socket
