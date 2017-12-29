@@ -12,17 +12,16 @@
 #define DEBUG_UART 1
 //#endif
 
-//long _write_stdout_r(struct _reent *r, int fd, const char *ptr, int len ) {
-long UartWriteFunction(struct _reent *r, int fd, const char *ptr,
-		int len ) {
+ssize_t UartWriteFunction(struct _reent *r, int fd, const void *ptr, size_t len ) {
 	(void)r;
 	(void)fd;
-    for(int i = 0; i < len; i++) {
-        if(ptr[i] == '\r')
+	char *toWrite = (char*)ptr;
+    for(size_t i = 0; i < len; i++) {
+        if(toWrite[i] == '\r')
             continue;
-        if(ptr[i] == '\n')
+        if(toWrite[i] == '\n')
             uart_putc(DEBUG_UART, '\r');
-        uart_putc(DEBUG_UART, ptr[i]);
+        uart_putc(DEBUG_UART, toWrite[i]);
     }
     return len;
 }

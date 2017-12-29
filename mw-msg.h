@@ -86,8 +86,8 @@ typedef struct {
 	uint8_t cfgNum;
 	uint8_t reserved[3];
 	struct ip_info cfg;
-	struct ip_addr dns1;
-	struct ip_addr dns2;
+	ip_addr_t dns1;
+	ip_addr_t dns2;
 } MwMsgIpCfg;
 
 /// SNTP and timezone configuration

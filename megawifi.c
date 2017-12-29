@@ -27,6 +27,7 @@
 #include <lwip/sys.h>
 #include <lwip/netdb.h>
 #include <lwip/dns.h>
+#include <lwip/ip_addr.h>
 
 // mbedtls
 #include <mbedtls/md5.h>
@@ -297,7 +298,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
     dprintf("... allocated socket\n");
 
     if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
-        close(s);
+        lwip_close(s);
         freeaddrinfo(res);
         dprintf("... socket connect failed.\n");
         return -1;
