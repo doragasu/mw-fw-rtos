@@ -209,6 +209,9 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 	MwCmd *rep;
 	struct sdk_bss_info *start = bss;
 	uint8_t *data;
+	// Number of found access points
+	/// \todo send number of found APS to host
+	uint8_t aps;
 
 	if (status == SCAN_OK) {
 		MwDebBssListPrint(bss);
@@ -229,8 +232,10 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 		bss = start;
 		rep->cmd = MW_CMD_OK;
 		rep->datalen = ByteSwapWord(repLen);
-		data = rep->data;
+		// First byte is the number of found APs
+		data = rep->data + 1;
 		tmp = 0;
+		aps = 0;
 		while ((bss->next.stqe_next != NULL) && (tmp < repLen)) {
 			bss = bss->next.stqe_next;
 			data[0] = bss->authmode;
@@ -240,7 +245,9 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 			memcpy(data + 4, bss->ssid, data[3]);
 			tmp += 4 + data[3];
 			data += 4 + data[3];
+			aps++;
 		}
+		data[0] = aps;
 		m.d = rep;
 	} else {
 		// Scan failed, set null pointer for the FSM to notice.
