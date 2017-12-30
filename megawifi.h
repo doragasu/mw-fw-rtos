@@ -13,7 +13,7 @@
 /// Major firmware version
 #define MW_FW_VERSION_MAJOR	0
 /// Minor firmware version
-#define MW_FW_VERSION_MINOR	2
+#define MW_FW_VERSION_MINOR	3
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 

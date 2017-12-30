@@ -612,16 +612,25 @@ void MwInit(void) {
 	}
 
 	// Create system queue
-    d.q  = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg));
+    if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
+		dprintf("Could not create system queue!\n");
+		return;
+	};
   	// Create FSM task
-	xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
-			MW_FSM_PRIO, NULL);
+	if (pdPASS != xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
+			MW_FSM_PRIO, NULL)) {
+		dprintf("Could not create FSM task!\n");
+	}
 	// Create task for receiving data from sockets
-	xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
-			MW_SOCK_PRIO, NULL);
+	if (pdPASS != xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
+			MW_SOCK_PRIO, NULL)) {
+		dprintf("Could not create FSM task!\n");
+	}
 	// Create task for polling WiFi status
-	xTaskCreate(MwWiFiStatPollTsk, "WPOL", MW_WPOLL_STACK_LEN,
-			&d.q, MW_WPOLL_PRIO, NULL);
+	if (pdPASS != xTaskCreate(MwWiFiStatPollTsk, "WPOL", MW_WPOLL_STACK_LEN,
+			&d.q, MW_WPOLL_PRIO, NULL)) {
+		dprintf("Could not create FSM task!\n");
+	}
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
 	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_NUM_SERVERS_SUPPORTED) &&
@@ -636,8 +645,13 @@ void MwInit(void) {
 		tz.tz_minuteswest = 0;
 		sntp_initialize(&tz);
 		dprintf("Setting update delay to %d seconds.\n", cfg.ntpUpDelay);
-		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
-		sntp_set_servers(sntpSrv, i);
+		/// \todo FIXME Setting sntp servers breaks tasking when using
+		/// latest esp-open-rtos
+//		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
+//		if (sntp_set_servers(sntpSrv, i)) {
+//			dprintf("Error setting SNTP servers!\n");
+//			return;
+//		}
 	} else dprintf("No NTP servers found!\n");
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(&d.q);
@@ -1044,6 +1058,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 void MwFsmReady(MwFsmMsg *msg) {
 	// Pointer to the message buffer (from RX line).
 	MwMsgBuf *b = msg->d;
+	MwCmd *rep;
 
 	switch (msg->e) {
 		case MW_EV_WIFI:		///< WiFi events, excluding scan related.
@@ -1066,14 +1081,22 @@ void MwFsmReady(MwFsmMsg *msg) {
 				} else {
 					dprintf("Command %d not allowed on READY state\n",
 							b->cmd.cmd>>8);
-					// TODO: Throw error event
+					// TODO: Throw error event?
+					rep = (MwCmd*)msg->d;
+					rep->datalen = 0;
+					rep->cmd = ByteSwapWord(MW_CMD_ERROR);
+					LsdSend((uint8_t*)rep, MW_CMD_HEADLEN, 0);
 				}
 			} else {
 				// Forward message if channel is enabled.
 				if (b->ch < LSD_MAX_CH && d.ss[b->ch - 1]) {
 					if (send(d.sock[b->ch - 1], b->data, b->len, 0) != b->len) {
 						dprintf("DEB: CH %d socket send error!\n", b->ch);
-						// TODO throw error event
+						// TODO throw error event?
+						rep = (MwCmd*)msg->d;
+						rep->datalen = 0;
+						rep->cmd = ByteSwapWord(MW_CMD_ERROR);
+						LsdSend((uint8_t*)rep, MW_CMD_HEADLEN, 0);
 					}
 				} else {
 					dprintf("Requested to forward data on wrong channel: %d\n",
@@ -1201,7 +1224,11 @@ static void MwFsm(MwFsmMsg *msg) {
 					} else {
 						dprintf("Command %d not allowed on IDLE state\n",
 								b->cmd.cmd>>8);
-						// TODO: Throw error event
+						// TODO: Throw error event?
+						rep = (MwCmd*)msg->d;
+						rep->datalen = 0;
+						rep->cmd = ByteSwapWord(MW_CMD_ERROR);
+						LsdSend((uint8_t*)rep, MW_CMD_HEADLEN, 0);
 					}
 				} else {
 					dprintf("IDLE received data on non ctrl channel!\n");
@@ -1290,6 +1317,7 @@ void MwFsmSockTsk(void *pvParameters) {
 	FD_ZERO(&readset);
 	d.fdMax = -1;
 
+	dprintf("FsmSock Task started!\n");
 	while (1) {
 		gpio_write(LED_GPIO_PIN, (led++)&1);
 		// Update list of active sockets (NOTE: investigate if select also
@@ -1353,6 +1381,7 @@ void MwFsmTsk(void *pvParameters) {
 	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 	MwFsmMsg m;
 
+	dprintf("FSM Task started!\n");
 	while(1) {
 		if (xQueueReceive(*q, &m, 1000)) {
 			dprintf("Recv msg, evt=%d\n", m.e);
@@ -1375,6 +1404,7 @@ void MwWiFiStatPollTsk(void *pvParameters) {
 
 	prev_con_stat = sdk_wifi_station_get_connect_status();
 
+	dprintf("WiFiStatPoll Task started!\n");
 	while(1) {
 		con_stat = sdk_wifi_station_get_connect_status();
 		if (con_stat != prev_con_stat) {

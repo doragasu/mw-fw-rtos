@@ -44,7 +44,9 @@
 /// LSD UART baud rate
 //#define LSD_UART_BR		(475625LU/2)
 //#define LSD_UART_BR		(477500/2)
-#define LSD_UART_BR		1500000
+//#define LSD_UART_BR		1500000
+#define LSD_UART_BR		500000
+//#define LSD_UART_BR		750000
 //#define LSD_UART_BR		115200
 
 /** \addtogroup lsd ReturnCodes OK/Error codes returned by several functions.
