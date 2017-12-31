@@ -210,18 +210,20 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 	struct sdk_bss_info *start = bss;
 	uint8_t *data;
 	// Number of found access points
-	/// \todo send number of found APS to host
 	uint8_t aps;
 
 	if (status == SCAN_OK) {
 		MwDebBssListPrint(bss);
-		repLen = tmp = 0;
+		repLen = tmp = aps = 0;
 		while (bss->next.stqe_next != NULL) {
 			bss = bss->next.stqe_next;
 			tmp += 4 + strnlen((const char*)bss->ssid, 32);
 			// Check we have not exceeded maximum length, truncate
 			// output if exceeded.
-			if (tmp <= (LSD_MAX_LEN - 4)) repLen = tmp;
+			if (tmp <= (LSD_MAX_LEN - 5)) {
+				repLen = tmp;
+				aps++;
+			}
 			else break;
 		}
 		if (!(rep = (MwCmd*) malloc(repLen + 4))) {
@@ -231,11 +233,11 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 		// Fill in reply data
 		bss = start;
 		rep->cmd = MW_CMD_OK;
-		rep->datalen = ByteSwapWord(repLen);
+		rep->datalen = ByteSwapWord(repLen + 1);
 		// First byte is the number of found APs
-		data = rep->data + 1;
+		data = rep->data;
+		*data++ = aps;
 		tmp = 0;
-		aps = 0;
 		while ((bss->next.stqe_next != NULL) && (tmp < repLen)) {
 			bss = bss->next.stqe_next;
 			data[0] = bss->authmode;
@@ -245,9 +247,7 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 			memcpy(data + 4, bss->ssid, data[3]);
 			tmp += 4 + data[3];
 			data += 4 + data[3];
-			aps++;
 		}
-		data[0] = aps;
 		m.d = rep;
 	} else {
 		// Scan failed, set null pointer for the FSM to notice.
@@ -654,7 +654,7 @@ void MwInit(void) {
 		dprintf("Setting update delay to %d seconds.\n", cfg.ntpUpDelay);
 		/// \todo FIXME Setting sntp servers breaks tasking when using
 		/// latest esp-open-rtos
-//		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
+		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
 //		if (sntp_set_servers(sntpSrv, i)) {
 //			dprintf("Error setting SNTP servers!\n");
 //			return;
@@ -722,13 +722,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datalen = 0;
 			tmp = c->apCfg.cfgNum;
 			if (tmp >= MW_NUM_AP_CFGS) {
-				dprintf("Configuration %d not available!\n", tmp);
+				dprintf("Tried to set AP for cfg %d!\n", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
 				// Copy configuration and save it to flash
-				dprintf("Setting AP configuration %d...\n", c->apCfg.cfgNum);
+				dprintf("Setting AP configuration %d...\n", tmp);
 				strncpy(cfg.ap[tmp].ssid, c->apCfg.ssid, MW_SSID_MAXLEN);
 				strncpy(cfg.ap[tmp].pass, c->apCfg.pass, MW_PASS_MAXLEN);
+				dprintf("ssid: %s\npass: %s\n", cfg.ap[tmp].ssid,
+						cfg.ap[tmp].pass);
 				cfg.defaultAp = tmp;
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
@@ -742,16 +744,20 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_AP_CFG_GET:
 			tmp = c->apCfg.cfgNum;
 			if (tmp >= MW_NUM_AP_CFGS) {
+				dprintf("Requested AP for cfg %d!\n", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				reply.datalen = 0;
 				replen = 0;
 			} else {
+				dprintf("Getting AP configuration %d...\n", tmp);
 				reply.cmd = MW_CMD_OK;
 				replen = sizeof(MwMsgApCfg);
 				reply.datalen = ByteSwapWord(sizeof(MwMsgApCfg));
 				reply.apCfg.cfgNum = c->apCfg.cfgNum;
 				strncpy(reply.apCfg.ssid, cfg.ap[tmp].ssid, MW_SSID_MAXLEN);
 				strncpy(reply.apCfg.pass, cfg.ap[tmp].pass, MW_PASS_MAXLEN);
+				dprintf("ssid: %s\npass: %s\n", reply.apCfg.ssid,
+						reply.apCfg.pass);
 			} 
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
@@ -760,11 +766,19 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = (uint8_t)c->ipCfg.cfgNum;
 			reply.datalen = 0;
 			if (tmp >= MW_NUM_AP_CFGS) {
+				dprintf("Tried to set IP for cfg %d!\n", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
+				dprintf("Setting IP configuration %d...\n", tmp);
 				cfg.ip[tmp] = c->ipCfg.cfg;
 				cfg.dns[tmp][0] = c->ipCfg.dns1;
 				cfg.dns[tmp][1] = c->ipCfg.dns2;
+				dprintf("IP: "); PrintIp(cfg.ip[tmp].ip.addr);
+				dprintf("\nMASK: "); PrintIp(cfg.ip[tmp].netmask.addr);
+				dprintf("\nGW: "); PrintIp(cfg.ip[tmp].gw.addr);
+				dprintf("\nDNS1: "); PrintIp(cfg.dns[tmp][0].addr);
+				dprintf("\nDNS2: "); PrintIp(cfg.dns[tmp][1].addr);
+				dprintf("\n");
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				} else {
@@ -778,8 +792,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = c->ipCfg.cfgNum;
 			reply.datalen = replen = 0;
 			if (tmp >= MW_NUM_AP_CFGS) {
+				dprintf("Requested IP for cfg %d!\n", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
+				dprintf("Getting IP configuration %d...\n", tmp);
 				reply.cmd = MW_CMD_OK;
 				replen = sizeof(MwMsgIpCfg);
 				reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
@@ -787,6 +803,12 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.ipCfg.cfg = cfg.ip[tmp];
 				reply.ipCfg.dns1 = cfg.dns[tmp][0];
 				reply.ipCfg.dns2 = cfg.dns[tmp][1];
+				dprintf("IP: "); PrintIp(cfg.ip[tmp].ip.addr);
+				dprintf("\nMASK: "); PrintIp(cfg.ip[tmp].netmask.addr);
+				dprintf("\nGW: "); PrintIp(cfg.ip[tmp].gw.addr);
+				dprintf("\nDNS1: "); PrintIp(cfg.dns[tmp][0].addr);
+				dprintf("\nDNS2: "); PrintIp(cfg.dns[tmp][1].addr);
+				dprintf("\n");
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
@@ -1155,13 +1177,13 @@ static void MwFsm(MwFsmMsg *msg) {
 				dprintf("INIT DONE!\n");
 				// If there's a valid AP configuration, try to join it and
 				// jump to the AP_JOIN state. Else jump to IDLE state.
-				if ((cfg.defaultAp >= 0) && (cfg.defaultAp < MW_NUM_AP_CFGS)) {
-					MwApJoin(cfg.defaultAp);
-					// TODO: Maybe we should set an AP join timeout.
-				} else {
-					dprintf("No default AP found.\nIDLE!\n");
+//				if ((cfg.defaultAp >= 0) && (cfg.defaultAp < MW_NUM_AP_CFGS)) {
+//					MwApJoin(cfg.defaultAp);
+//					// TODO: Maybe we should set an AP join timeout.
+//				} else {
+//					dprintf("No default AP found.\nIDLE!\n");
 					d.s.sys_stat = MW_ST_IDLE;
-				}
+//				}
 			}
 			break;
 

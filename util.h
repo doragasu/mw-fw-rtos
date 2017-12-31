@@ -60,6 +60,11 @@
 #define HandleErrorEn(en, msg, ret)
 #endif
 
+static inline void PrintIp(uint32_t addr) {
+    dprintf("%d.%d.%d.%d", 0xFF & addr, 0xFF & (addr>>8), 0xFF & (addr>>16),
+            addr>>24);
+}
+
 /// Similar to strcpy, but returns a pointer to the last character of the
 /// src input string (the ending '\0')
 static inline const char *StrCpySrc(char *dst, const char *src) {
