@@ -286,7 +286,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
     err = getaddrinfo(addr->data, addr->dst_port, &hints, &res);
 
     if(err != 0 || res == NULL) {
-		dprintf("DNS lookup failure\n");
+		dprintf("DNS lookup failure %d\n", err);
         if(res)
             freeaddrinfo(res);
         return -1;
