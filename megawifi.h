@@ -87,8 +87,8 @@
 #define MW_CMD_AP_SCAN			  3		///< Scan for access points
 #define MW_CMD_AP_CFG			  4		///< Configure access point
 #define MW_CMD_AP_CFG_GET   	  5		///< Get access point configuration
+#define MW_CMD_IP_CURRENT	      6		///< Get current IPv4 configuration
 // Reserved slot
-#define MW_CMD_IP_CURRENT	      7		///< Get current IPv4 configuration
 #define MW_CMD_IP_CFG			  8		///< Configure IPv4
 #define MW_CMD_IP_CFG_GET		  9		///< Get IPv4 configuration
 #define MW_CMD_DEF_AP_CFG		 10		///< Set default AP configuration

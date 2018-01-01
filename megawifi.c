@@ -1358,6 +1358,7 @@ void MwFsmSockTsk(void *pvParameters) {
 	fd_set readset;
 	int i, ch, retval;
 	int led = 0;
+	int max;
 	ssize_t recvd;
 	struct timeval tv = {
 		.tv_sec = 1,
@@ -1379,6 +1380,7 @@ void MwFsmSockTsk(void *pvParameters) {
 		// Wait until event or timeout
 		// TODO: d.fdMax is initialized to -1. How does select() behave if
 		// nfds = 0?
+		dprintf(".");
 		if ((retval = select(d.fdMax + 1, &readset, NULL, NULL, &tv)) < 0) {
 			// Error.
 			dprintf("select() completed with error!\n");
@@ -1390,9 +1392,12 @@ void MwFsmSockTsk(void *pvParameters) {
 		dprintf("select()=%d\n", retval);
 		// Poll the socket for data, and forward through the associated
 		// channel.
-		for (i = 0; i <= d.fdMax; i++) {
+		max = d.fdMax;
+		for (i = 0; i <= max; i++) {
+			dprintf("--> in con loop %d\n", i);
 			if (FD_ISSET(i, &readset)) {
 				// Check if new connection or data received
+				dprintf("--> %d is set!\n", i);
 				ch = d.chan[i];
 				if (d.ss[ch - 1] != MW_SOCK_TCP_LISTEN) {
 					dprintf("Rx: sock=%d, ch=%d\n", i, ch);
@@ -1406,6 +1411,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						// TODO: A listen on a socket closed, should trigger
 						// a 0-byte reception, for the client to be able to
 						// check server state and close the connection.
+						dprintf("Received 0!\n");
 						MwFsmTcpDis(ch);
 						dprintf("Socket closed!\n");
 						MwFsmRaiseChEvent(ch);
@@ -1421,8 +1427,11 @@ void MwFsmSockTsk(void *pvParameters) {
 					}
 				} else {
 					// Incoming connection. Accept it.
+					dprintf("Accept connection %d on ch %d\n", i, ch);
 					MwAccept(i, ch);
+					dprintf("Accepted\n");
 					MwFsmRaiseChEvent(ch);
+					dprintf("Raised\n");
 				}
 			}
 		}
@@ -1448,9 +1457,9 @@ void MwFsmTsk(void *pvParameters) {
 }
 
 void MwWiFiStatPollTsk(void *pvParameters) {
+	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 	uint8_t con_stat, prev_con_stat;
 	MwFsmMsg m;
-	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 
 	m.e = MW_EV_WIFI;
 

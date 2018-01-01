@@ -248,7 +248,7 @@ int LsdSplitEnd(uint8_t *data, uint16_t len) {
  * will likely cause overruns!
  ****************************************************************************/
 void LsdRxBufFree(void) {
-	// Just increment the receier semaphore count. Might cause problems
+	// Just increment the receiver semaphore count. Might cause problems
 	// if not properly used!
 	xSemaphoreGive(d.sem);
 }
@@ -257,12 +257,12 @@ void LsdRxBufFree(void) {
 #define RXB 	d.rx[d.current]
 // Receive task
 void LsdRecvTsk(void *pvParameters) {
+	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 	MwFsmMsg m;
 	uint16_t pos = 0;
 	bool receiving;
 	uint8_t recv;
 
-	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 
 	while (1) {
 		// Grab receive buffer semaphore
