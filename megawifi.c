@@ -65,20 +65,20 @@ typedef enum {
 const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
-	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
-	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
-	MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
+	MW_CMD_SNTP_CFG, /*MW_CMD_SNTP_CFG_GET,*/ MW_CMD_DATETIME, MW_CMD_DT_SET,
+	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
+	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
 };
 
 /// Commands allowed while in READY state
 const static uint8_t mwReadyCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
-	MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_LEAVE, MW_CMD_TCP_CON,
-	MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_DISC,
+	MW_CMD_IP_CURRENT, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_LEAVE,
+	MW_CMD_TCP_CON, MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_DISC,
 	MW_CMD_UDP_SET, MW_CMD_UDP_CLR, MW_CMD_SOCK_STAT, MW_CMD_PING,
-	MW_CMD_SNTP_CFG, MW_CMD_DATETIME, MW_CMD_DT_SET, MW_CMD_FLASH_WRITE,
-	MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID, MW_CMD_SYS_STAT,
-	MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
+	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
+	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
+	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
 };
 
 /*
@@ -762,6 +762,25 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
+		case MW_CMD_IP_CURRENT:
+			reply.datalen = replen = 0;
+			reply.cmd = MW_CMD_OK;
+			dprintf("Getting current IP configuration...\n");
+			replen = sizeof(MwMsgIpCfg);
+			reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
+			reply.ipCfg.cfgNum = 0;
+			sdk_wifi_get_ip_info(STATION_IF, &reply.ipCfg.cfg);
+			reply.ipCfg.dns1 = *dns_getserver(0);
+			reply.ipCfg.dns2 = *dns_getserver(1);
+			dprintf("IP: "); PrintIp(reply.ipCfg.cfg.ip.addr);
+			dprintf("\nMASK: "); PrintIp(reply.ipCfg.cfg.netmask.addr);
+			dprintf("\nGW: "); PrintIp(reply.ipCfg.cfg.gw.addr);
+			dprintf("\nDNS1: "); PrintIp(reply.ipCfg.dns1.addr);
+			dprintf("\nDNS2: "); PrintIp(reply.ipCfg.dns2.addr);
+			dprintf("\n");
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
 		case MW_CMD_IP_CFG:
 			tmp = (uint8_t)c->ipCfg.cfgNum;
 			reply.datalen = 0;
@@ -944,6 +963,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_SNTP_CFG_GET:
+			dprintf("SNTP_CFG_GET unimplemented\n");
 			break;
 
 		case MW_CMD_DATETIME:
