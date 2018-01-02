@@ -93,7 +93,7 @@ void LsdInit(QueueHandle_t *q) {
 	// Create semaphore used to handle receive buffers
 	d.sem = xSemaphoreCreateCounting(LSD_BUF_FRAMES, LSD_BUF_FRAMES);
 	// Create receive task
-		xTaskCreate(LsdRecvTsk, "LSDR", 256, q, LSD_RECV_PRIO, NULL);
+		xTaskCreate(LsdRecvTsk, "LSDR", 512, q, LSD_RECV_PRIO, NULL);
 	// Configure UARTs
 	uart_set_baud(LSD_UART, LSD_UART_BR);
 	Uart0AutoRtsCtsCfg();
@@ -152,7 +152,7 @@ int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
 		return 0;
 	}
 
-	dprintf("Sending %d bytes\n", len);
+//	dprintf("Sending %d bytes\n", len);
 	scratch[0] = LSD_STX_ETX;
 	scratch[1] = (ch<<4) | (len>>8);
 	scratch[2] = len & 0xFF;
@@ -191,10 +191,10 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
 	scratch[1] = (ch<<4) || (total>>8);
 	scratch[2] = total & 0xFF;
 	// Send STX, channel and length
-	dprintf("Sending header\n");
+//	dprintf("Sending header\n");
 	write(LSD_UART, scratch, sizeof(scratch));
 	// Send data payload
-	dprintf("Sending %d bytes\n", len);
+//	dprintf("Sending %d bytes\n", len);
 	if (len) write(LSD_UART, data, len);
 	return len;
 }
@@ -211,7 +211,7 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
  ****************************************************************************/
 int LsdSplitNext(uint8_t *data, uint16_t len) {
 	// send data
-	dprintf("Sending %d bytes\n", len);
+//	dprintf("Sending %d bytes\n", len);
 	write(LSD_UART, data, len);
 	return len;
 }
@@ -230,11 +230,11 @@ int LsdSplitEnd(uint8_t *data, uint16_t len) {
 	uint8_t scratch = LSD_STX_ETX;
 
 	// Send data
-	dprintf("Sending %d bytes\n", len);
+//	dprintf("Sending %d bytes\n", len);
 	write(LSD_UART, data, len);
 	
 	// Send ETX
-	dprintf("Sending ETX\n");
+//	dprintf("Sending ETX\n");
 	write(LSD_UART, &scratch, 1);
 
 	return len;

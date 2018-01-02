@@ -1370,7 +1370,6 @@ void MwFsmSockTsk(void *pvParameters) {
 	FD_ZERO(&readset);
 	d.fdMax = -1;
 
-	dprintf("FsmSock Task started!\n");
 	while (1) {
 		gpio_write(LED_GPIO_PIN, (led++)&1);
 		// Update list of active sockets (NOTE: investigate if select also
@@ -1394,10 +1393,8 @@ void MwFsmSockTsk(void *pvParameters) {
 		// channel.
 		max = d.fdMax;
 		for (i = 0; i <= max; i++) {
-			dprintf("--> in con loop %d\n", i);
 			if (FD_ISSET(i, &readset)) {
 				// Check if new connection or data received
-				dprintf("--> %d is set!\n", i);
 				ch = d.chan[i];
 				if (d.ss[ch - 1] != MW_SOCK_TCP_LISTEN) {
 					dprintf("Rx: sock=%d, ch=%d\n", i, ch);
@@ -1427,11 +1424,8 @@ void MwFsmSockTsk(void *pvParameters) {
 					}
 				} else {
 					// Incoming connection. Accept it.
-					dprintf("Accept connection %d on ch %d\n", i, ch);
 					MwAccept(i, ch);
-					dprintf("Accepted\n");
 					MwFsmRaiseChEvent(ch);
-					dprintf("Raised\n");
 				}
 			}
 		}
@@ -1442,10 +1436,9 @@ void MwFsmTsk(void *pvParameters) {
 	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
 	MwFsmMsg m;
 
-	dprintf("FSM Task started!\n");
 	while(1) {
 		if (xQueueReceive(*q, &m, 1000)) {
-			dprintf("Recv msg, evt=%d\n", m.e);
+//			dprintf("Recv msg, evt=%d\n", m.e);
 			MwFsm(&m);
 			// If event was MW_EV_SER_RX, free the buffer
 			LsdRxBufFree();
@@ -1465,7 +1458,6 @@ void MwWiFiStatPollTsk(void *pvParameters) {
 
 	prev_con_stat = sdk_wifi_station_get_connect_status();
 
-	dprintf("WiFiStatPoll Task started!\n");
 	while(1) {
 		con_stat = sdk_wifi_station_get_connect_status();
 		if (con_stat != prev_con_stat) {

@@ -48,7 +48,7 @@
 #define MW_SOCK_STACK_LEN	1024
 
 /// Stack size (in elements) for WPOLL task
-#define MW_WPOLL_STACK_LEN	1024
+#define MW_WPOLL_STACK_LEN	256
 
 /// Control channel used for command interpreter
 #define MW_CTRL_CH			0
