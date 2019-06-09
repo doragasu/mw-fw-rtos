@@ -13,7 +13,7 @@
 /// Major firmware version
 #define MW_FW_VERSION_MAJOR	0
 /// Minor firmware version
-#define MW_FW_VERSION_MINOR	3
+#define MW_FW_VERSION_MINOR	4
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 
@@ -23,6 +23,8 @@
 #define MW_NUM_AP_CFGS		3
 /// Number of DSN servers supported per AP configuration.
 #define MW_NUM_DNS_SERVERS	2
+/// Number of gamertags that can be stored in the module
+#define MW_NUM_GAMERTAGS	3
 /// Length of the FSM queue
 #define MW_FSM_QUEUE_LEN	8
 /// Maximum number of simultaneous TCP connections

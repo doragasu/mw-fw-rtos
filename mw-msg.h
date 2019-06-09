@@ -20,6 +20,17 @@
 
 #define MW_FACT_RESET_MAGIC	0xFEAA5501	
 
+/// Gamertag nickname maximum length
+#define MW_GT_NICKNAME_MAX		32
+/// Gamertag security maximum length
+#define MW_GT_SECURITY_MAX		32
+/// Gamertag tagline maximum length
+#define MW_GT_TAGLINE_MAX		32
+/// Gamertag avatar graphick width in pixels
+#define MW_GT_AVATAR_WIDTH		32
+/// Gamertag avatar graphick height in pixels
+#define MW_GT_AVATAR_HEIGHT		48
+
 /** \addtogroup MwApi MwEvent Events parsed by the system FSM.
  *  \{ */
 /* TODO ADD UART EVENTS? MAYBE REMOVE SOCKET EVENTS? */
@@ -120,6 +131,29 @@ typedef struct {
 	uint8_t  channel;
 } MwMsgBind;
 
+/// Gamertag data
+struct mw_gamertag {
+	/// Unique gamertag id
+	int id;
+	/// User nickname
+	char nickname[MW_GT_NICKNAME_MAX];
+	/// User security string
+	char security[MW_GT_SECURITY_MAX];
+	/// User defined text tag
+	char tagline[MW_GT_TAGLINE_MAX];
+	/// Avatar image tiles
+	uint8_t avatar_tiles[MW_GT_AVATAR_WIDTH * MW_GT_AVATAR_HEIGHT / 2];
+	/// Avatar image palette
+	uint8_t avatar_pal[32];
+};
+
+/// Gamertag set message data
+struct mw_gamertag_set_msg {
+	uint8_t slot;			///< Slot to store gamertag (0 to 2)
+	uint8_t reserved[3];		///< Reserved, set to 0
+	struct mw_gamertag gamertag;	///< Gamertag to set
+};
+
 /** \addtogroup MwApi MwSockStat Socket status.
  *  \{ */
 typedef enum {
@@ -177,6 +211,8 @@ typedef struct {
 		MwMsgFlashRange flRange;
 		MwMsgBind bind;
 		MwMsgSysStat sysStat;
+		struct mw_gamertag_set_msg gamertag_set;///< Gamertag set
+		struct mw_gamertag gamertag_get;	///< Gamertag get
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
 		uint16_t rndLen;	// Length of the random buffer to fill

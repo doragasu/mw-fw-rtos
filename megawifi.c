@@ -39,10 +39,6 @@
 // Flash manipulation
 //#include <spiflash.h>
 
-// Local configuration data
-// TODO REMOVE ONCE TESTS FINISHED
-#include "ssid_config.h"
-
 #include "megawifi.h"
 #include "lsd.h"
 #include "util.h"
@@ -116,11 +112,12 @@ typedef struct {
 	int8_t timezone;
 	/// One DST hour will be applied if set to 1
 	uint8_t dst;
+	/// Gamertag
+	struct mw_gamertag gamertag[MW_NUM_GAMERTAGS];
 	/// Checksum
 	uint8_t md5[16];
 } MwNvCfg;
 /** \} */
-
 
 /** \addtogroup MwApi MwData Module data needed to handle module status
  *  \todo Maybe we should add a semaphore to access data in this struct.
@@ -1127,9 +1124,33 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_GAMERTAG_SET:
+			reply.datalen = 0;
+			if (c->gamertag_set.slot >= MW_NUM_GAMERTAGS ||
+					len != sizeof(struct mw_gamertag_set_msg)) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				// Copy gamertag and save to flash
+				memcpy(&cfg.gamertag[c->gamertag_set.slot],
+						&c->gamertag_set.gamertag,
+						sizeof(struct mw_gamertag));
+				MwNvCfgSave();
+				reply.cmd = MW_CMD_OK;
+			}
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_GAMERTAG_GET:
+			if (c->data[0] >= MW_NUM_GAMERTAGS) {
+				replen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				replen = sizeof(struct mw_gamertag);
+				memcpy(&reply.gamertag_get, &cfg.gamertag[c->data[0]],
+						replen);
+				reply.cmd = MW_CMD_OK;
+			}
+			reply.datalen = ByteSwapWord(replen);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		default:
