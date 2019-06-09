@@ -36,6 +36,9 @@
 #include <sntp.h>
 #include <time.h>
 
+// Flash manipulation
+//#include <spiflash.h>
+
 // Local configuration data
 // TODO REMOVE ONCE TESTS FINISHED
 #include "ssid_config.h"
@@ -67,7 +70,8 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
 	MW_CMD_SNTP_CFG, /*MW_CMD_SNTP_CFG_GET,*/ MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
-	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
+	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
+	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET
 };
 
 /// Commands allowed while in READY state
@@ -78,7 +82,8 @@ const static uint8_t mwReadyCmds[] = {
 	MW_CMD_UDP_SET, MW_CMD_UDP_CLR, MW_CMD_SOCK_STAT, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
-	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET
+	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
+	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET
 };
 
 /*
@@ -505,12 +510,14 @@ int MwNvCfgSave(void) {
 	printf("Saved MD5: "); PrintHex(cfg.md5, 16); putchar('\n');
 #endif
 	// Erase configuration sector
+//	if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
 	if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
 			SPI_FLASH_RESULT_OK) {
 		dprintf("Flash sector 0x%X erase failed!\n", MW_CFG_FLASH_SECT);
 		return -1;
 	}
 	// Write configuration to flash
+//	if (!spiflash_write(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg))) {
 	if (sdk_spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
 			sizeof(MwNvCfg)) != SPI_FLASH_RESULT_OK) {
 		dprintf("Flash write addr 0x%X failed!\n", MW_CFG_FLASH_ADDR);
@@ -530,6 +537,7 @@ int MwCfgLoad(void) {
 	uint8_t md5[16];
 
 	// Load configuration from flash
+//	spiflash_read(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg));
 	sdk_spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
 	// Check MD5
 	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
@@ -586,6 +594,8 @@ void MwInit(void) {
 	if (sdk_wifi_station_get_auto_connect())
 		sdk_wifi_station_set_auto_connect(0);
 
+	// Get flash chip information
+	dprintf("SPI Flash id: 0x%08X\n", sdk_spi_flash_get_id());
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
@@ -1000,6 +1010,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else if (sdk_spi_flash_write(c->flData.addr,
 						(uint32_t*)c->flData.data, len - sizeof(uint32_t)) !=
 					SPI_FLASH_RESULT_OK) {
+//			} else if (!spiflash_write(c->flData.addr, (uint8_t*)c->flData.data,
+//					len - sizeof(uint32_t))) {
 				dprintf("Write to flash failed!\n");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			}
@@ -1023,6 +1035,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else if (sdk_spi_flash_read(c->flRange.addr,
 						(uint32_t*)reply.data, c->flRange.len) !=
 					SPI_FLASH_RESULT_OK) {
+//			} else if (!spiflash_read(c->flRange.addr,
+//						(uint8_t*)reply.data, c->flRange.len)) {
 				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				dprintf("Flash read failed!\n");
@@ -1043,6 +1057,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				dprintf("Wrong sector number.\n");
 			} else if (sdk_spi_flash_erase_sector(c->flSect) !=
 					SPI_FLASH_RESULT_OK) {
+//			} else if (!spiflash_erase_sector((c->flSect)<<12)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				dprintf("Sector erase failed!\n");
 			} else {
@@ -1076,6 +1091,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
 					SPI_FLASH_RESULT_OK) {
+//			} else if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
 				dprintf("Config flash sector erase failed!\n");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
@@ -1097,6 +1113,23 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				hwrand_fill(reply.data, replen);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
+		case MW_CMD_BSSID_GET:
+			reply.datalen = ByteSwapWord(6);
+			reply.cmd = MW_CMD_OK;
+			sdk_wifi_get_macaddr(c->data[0], reply.data);
+			dprintf("Got BSSID(%d) %02X:%02X:%02X:%02X:%02X:%02X\n",
+					c->data[0], reply.data[0], reply.data[1],
+					reply.data[2], reply.data[3],
+					reply.data[4], reply.data[5]);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 6, 0);
+			break;
+
+		case MW_CMD_GAMERTAG_SET:
+			break;
+
+		case MW_CMD_GAMERTAG_GET:
 			break;
 
 		default:

@@ -81,18 +81,18 @@
 
 /** \addtogroup MwApi Cmds Supported commands.
  *  \{ */
-#define MW_CMD_OK				  0		///< OK command reply
-#define MW_CMD_VERSION      	  1		///< Get firmware version
-#define MW_CMD_ECHO				  2		///< Echo data
+#define MW_CMD_OK			  0		///< OK command reply
+#define MW_CMD_VERSION     	 	  1		///< Get firmware version
+#define MW_CMD_ECHO			  2		///< Echo data
 #define MW_CMD_AP_SCAN			  3		///< Scan for access points
 #define MW_CMD_AP_CFG			  4		///< Configure access point
-#define MW_CMD_AP_CFG_GET   	  5		///< Get access point configuration
-#define MW_CMD_IP_CURRENT	      6		///< Get current IPv4 configuration
+#define MW_CMD_AP_CFG_GET		  5		///< Get access point configuration
+#define MW_CMD_IP_CURRENT		  6		///< Get current IPv4 configuration
 // Reserved slot
 #define MW_CMD_IP_CFG			  8		///< Configure IPv4
 #define MW_CMD_IP_CFG_GET		  9		///< Get IPv4 configuration
 #define MW_CMD_DEF_AP_CFG		 10		///< Set default AP configuration
-#define MW_CMD_DEF_AP_CFG_GET	 11		///< Get default AP configuration
+#define MW_CMD_DEF_AP_CFG_GET		 11		///< Get default AP configuration
 #define MW_CMD_AP_JOIN			 12		///< Join access point
 #define MW_CMD_AP_LEAVE			 13		///< Leave previously joined AP
 #define MW_CMD_TCP_CON			 14		///< Connect TCP socket
@@ -102,11 +102,11 @@
 #define MW_CMD_UDP_SET			 18		///< Configure UDP socket
 #define MW_CMD_UDP_CLR			 19		///< Clear and free UDP socket
 #define MW_CMD_SOCK_STAT		 20		///< Get socket status
-#define MW_CMD_PING				 21		///< Ping host
+#define MW_CMD_PING			 21		///< Ping host
 #define MW_CMD_SNTP_CFG			 22		///< Configure SNTP service
-#define MW_CMD_SNTP_CFG_GET      23     ///< Get SNTP configuration
+#define MW_CMD_SNTP_CFG_GET		 23     ///< Get SNTP configuration
 #define MW_CMD_DATETIME			 24		///< Get date and time
-#define MW_CMD_DT_SET       	 25		///< Set date and time
+#define MW_CMD_DT_SET			 25		///< Set date and time
 #define MW_CMD_FLASH_WRITE		 26		///< Write to WiFi module flash
 #define MW_CMD_FLASH_READ		 27		///< Read from WiFi module flash
 #define MW_CMD_FLASH_ERASE		 28		///< Erase sector from WiFi flash
@@ -114,6 +114,9 @@
 #define MW_CMD_SYS_STAT			 30		///< Get system status
 #define MW_CMD_DEF_CFG_SET		 31		///< Set default configuration
 #define MW_CMD_HRNG_GET			 32		///< Gets random numbers
+#define MW_CMD_BSSID_GET		 33		///< Gets the WiFi BSSID
+#define MW_CMD_GAMERTAG_SET		 34		///< Configures a gamertag
+#define MW_CMD_GAMERTAG_GET		 35		///< Gets a stored gamertag
 #define MW_CMD_ERROR			255		///< Error command reply
 /** \} */
 

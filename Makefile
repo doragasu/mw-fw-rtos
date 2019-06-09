@@ -12,8 +12,8 @@ cart: firmware/$(PROGRAM).bin
 	@$(MDMAP) $<:0x2000
 
 boot:
-	@$(MDMAP) $(RBOOT_BIN)
-#	@$(MDMAP) $(RBOOT_PREBUILT_BIN)
+#	@$(MDMAP) $(RBOOT_BIN)
+	@$(MDMAP) $(RBOOT_PREBUILT_BIN)
 
 blank_cfg:
 	@$(MDMAP) $(RBOOT_CONF):0x1000
