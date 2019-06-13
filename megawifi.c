@@ -63,7 +63,8 @@ typedef enum {
 /// Commands allowed while in IDLE state
 const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
-	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_JOIN,
+	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_DEF_AP_CFG,
+	MW_CMD_DEF_AP_CFG_GET, MW_CMD_AP_JOIN,
 	MW_CMD_SNTP_CFG, /*MW_CMD_SNTP_CFG_GET,*/ MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
 	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
@@ -73,7 +74,8 @@ const static uint8_t mwIdleCmds[] = {
 /// Commands allowed while in READY state
 const static uint8_t mwReadyCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
-	MW_CMD_IP_CURRENT, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_AP_LEAVE,
+	MW_CMD_IP_CURRENT, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_DEF_AP_CFG,
+	MW_CMD_DEF_AP_CFG_GET, MW_CMD_AP_LEAVE,
 	MW_CMD_TCP_CON, MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_DISC,
 	MW_CMD_UDP_SET, MW_CMD_UDP_CLR, MW_CMD_SOCK_STAT, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
@@ -844,9 +846,11 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = c->data[0];
 			if (tmp < MW_NUM_AP_CFGS) {
 				cfg.defaultAp = tmp;
+				dprintf("Set default AP: %d\n", cfg.defaultAp);
 				if (MwNvCfgSave() != 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				} else {
+					dprintf("Set default AP: %d\n", cfg.defaultAp);
 					reply.cmd = MW_CMD_OK;
 				}
 			}
@@ -857,7 +861,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datalen = ByteSwapWord(1);
 			reply.cmd = MW_CMD_OK;
 			reply.data[0] = cfg.defaultAp;
-			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 1);
+			dprintf("Sending default AP: %d\n", cfg.defaultAp);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 1, 0);
 			break;
 
 		case MW_CMD_AP_JOIN:
