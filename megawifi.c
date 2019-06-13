@@ -558,9 +558,33 @@ int MwCfgLoad(void) {
 	return 1;
 }
 
+static void SetIpCfg(int slot) {
+	if ((cfg.ip[slot].ip.addr) && (cfg.ip[slot].netmask.addr)
+				&& (cfg.ip[slot].gw.addr)) {
+		sdk_wifi_station_dhcpc_stop();
+		if (sdk_wifi_set_ip_info(STATION_IF, cfg.ip + slot)) {
+			dprintf("Static IP configuration set.\n");
+			// Set DNS servers if available
+			if (cfg.dns[slot][0].addr) {
+				dns_setserver(0, cfg.dns[slot] + 0);
+				if (cfg.dns[slot][1].addr) {
+					dns_setserver(1, cfg.dns[slot] + 1);
+				}
+			}
+		} else {
+			dprintf("Failed setting static IP configuration.\n");
+			sdk_wifi_station_dhcpc_start();
+		}
+	} else {
+		dprintf("Setting DHCP IP configuration.\n");
+		sdk_wifi_station_dhcpc_start();
+	}
+}
+
 void MwApJoin(uint8_t n) {
 	struct sdk_station_config stcfg;
 
+	SetIpCfg(n);
 	memset(&stcfg, 0, sizeof(struct sdk_station_config));
 	strncpy((char*)stcfg.ssid, cfg.ap[n].ssid, MW_SSID_MAXLEN);
 	strncpy((char*)stcfg.password, cfg.ap[n].pass, MW_PASS_MAXLEN);
@@ -609,23 +633,7 @@ void MwInit(void) {
 	// If default IP configuration saved, apply it
 	// NOTE: IP configuration can only be set in user_init() context.
 	tmp = (uint8_t) cfg.defaultAp;
-	if ((tmp < MW_NUM_AP_CFGS) && (cfg.ip[tmp].ip.addr) &&
-			(cfg.ip[tmp].netmask.addr) && (cfg.ip[tmp].gw.addr)) {
-		sdk_wifi_station_dhcpc_stop();
-		if (sdk_wifi_set_ip_info(STATION_IF, cfg.ip + tmp)) {
-			dprintf("Static IP configuration set.\n");
-			// Set DNS servers if available
-			if (cfg.dns[tmp][0].addr) {
-				dns_setserver(0, cfg.dns[tmp] + 0);
-				if (cfg.dns[tmp][1].addr) {
-					dns_setserver(1, cfg.dns[tmp] + 1);
-				}
-			}
-		} else {
-			dprintf("Failed setting static IP configuration.\n");
-			sdk_wifi_station_dhcpc_start();
-		}
-	}
+	SetIpCfg(tmp);
 
 	// Create system queue
     if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
