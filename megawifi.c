@@ -321,7 +321,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
 	d.sock[addr->channel - 1] = s;
 	d.ss[addr->channel - 1] = MW_SOCK_TCP_EST;
 	// Record channel number associated with socket
-	d.chan[s] = addr->channel;
+	d.chan[s - LWIP_SOCKET_OFFSET] = addr->channel;
 	// Add socket to the FD set and update maximum socket valud
 	FD_SET(s, &d.fds);
 	d.fdMax = MAX(s, d.fdMax);
@@ -386,7 +386,7 @@ int MwFsmTcpBind(MwMsgBind *b) {
 
 	// Fill in channel data
 	d.sock[b->channel - 1] = serv;
-	d.chan[serv] = b->channel;
+	d.chan[serv - LWIP_SOCKET_OFFSET] = b->channel;
 	d.ss[b->channel - 1] = MW_SOCK_TCP_LISTEN;
 
 	// Add listener to the FD set
@@ -405,8 +405,9 @@ void MwFsmTcpDis(int ch) {
 
 	lwip_close(d.sock[ch]);
 	FD_CLR(d.sock[ch], &d.fds);
-	d.chan[d.sock[ch]] = -1;	// No channe associated with this socket
-	d.sock[ch] = -1;			// No socket on this channel
+	// No channel associated with this socket
+	d.chan[d.sock[ch] - LWIP_SOCKET_OFFSET] = -1;
+	d.sock[ch] = -1; // No socket on this channel
 }
 
 /// Creates a socket and binds it to a port
@@ -423,7 +424,7 @@ int MwTcpBind(int ch, uint16_t port) {
 		dprintf("Requested unavailable channel %d\n", ch);
 		return -1;
 	}
-	if (d.chan[ch]) {
+	if (d.chan[ch >= 0]) {
 		dprintf("Requested already in-use channel %d\n", ch);
 		return -1;
 	}
@@ -678,7 +679,7 @@ void MwInit(void) {
 //		}
 	} else dprintf("No NTP servers found!\n");
 	// Initialize LSD layer (will create receive task among other stuff).
-	LsdInit(&d.q);
+	LsdInit(d.q);
 	LsdChEnable(MW_CTRL_CH);
 	// Send the init done message
 	m.e = MW_EV_INIT_DONE;
@@ -1389,7 +1390,7 @@ static void MwFsm(MwFsmMsg *msg) {
 
 // Accept incoming connection and get fds. Then close server socket (no more
 // connections allowed on this port unless explicitly requested again).
-int MwAccept(int sock, int ch) {
+static int MwAccept(int sock, int ch) {
 	// Client address
 	struct sockaddr_in caddr;
 	socklen_t addrlen = sizeof(caddr);
@@ -1409,7 +1410,7 @@ int MwAccept(int sock, int ch) {
 	lwip_close(sock);
 	FD_CLR(sock, &d.fds);
 	// Update channel data
-	d.chan[newsock] = ch;
+	d.chan[newsock - LWIP_SOCKET_OFFSET] = ch;
 	d.sock[ch - 1] = newsock;
 	d.ss[ch - 1] = MW_SOCK_TCP_EST;
 
@@ -1459,10 +1460,10 @@ void MwFsmSockTsk(void *pvParameters) {
 		// Poll the socket for data, and forward through the associated
 		// channel.
 		max = d.fdMax;
-		for (i = 0; i <= max; i++) {
+		for (i = LWIP_SOCKET_OFFSET; i <= max; i++) {
 			if (FD_ISSET(i, &readset)) {
 				// Check if new connection or data received
-				ch = d.chan[i];
+				ch = d.chan[i - LWIP_SOCKET_OFFSET];
 				if (d.ss[ch - 1] != MW_SOCK_TCP_LISTEN) {
 					dprintf("Rx: sock=%d, ch=%d\n", i, ch);
 					if ((recvd = recv(i, buf, LSD_MAX_LEN, 0)) < 0) {
@@ -1487,7 +1488,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						dprintf("%02X %02X %02X %02X: ", buf[0], buf[1],
 								buf[2], buf[3]);
 						dprintf("WF->MD %d bytes\n", recvd);
-						LsdSend(buf, (uint16_t)recvd, d.chan[i]);
+						LsdSend(buf, (uint16_t)recvd, ch);
 					}
 				} else {
 					// Incoming connection. Accept it.

@@ -64,7 +64,7 @@ void user_init(void) {
 	uart_set_baud(UART_DEBUG, 115200);
 	printf("\n=== MeGaWiFi firmware version %d.%d-%s ===\n",
 			MW_FW_VERSION_MAJOR, MW_FW_VERSION_MINOR, MW_FW_VARIANT);
-	printf("            doragasu, 2016\n\n");
+	printf("            doragasu, 2016 ~ 2019\n\n");
 	// Power the LED on
 	LedInit();
 	LedOn();

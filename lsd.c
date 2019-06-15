@@ -86,7 +86,7 @@ void Uart0AutoRtsCtsCfg(void) {
  * Module initialization. Call this function before any other one in this
  * module.
  ****************************************************************************/
-void LsdInit(QueueHandle_t *q) {
+void LsdInit(QueueHandle_t q) {
 	// Set variables to default values
 	memset(&d, 0, sizeof(LsdData));
 	d.rxs = LSD_ST_STX_WAIT;
@@ -257,7 +257,7 @@ void LsdRxBufFree(void) {
 #define RXB 	d.rx[d.current]
 // Receive task
 void LsdRecvTsk(void *pvParameters) {
-	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
+	QueueHandle_t q = (QueueHandle_t)pvParameters;
 	MwFsmMsg m;
 	uint16_t pos = 0;
 	bool receiving;
@@ -327,7 +327,7 @@ void LsdRecvTsk(void *pvParameters) {
 							d.current ^= 1;
 							// Set receiving to false, to grab a new buffer
 							receiving = FALSE;
-							xQueueSend(*q, &m, portMAX_DELAY);
+							xQueueSend(q, &m, portMAX_DELAY);
 						} else {
 						dprintf("Expecting ETX but not received!\n");
 						}
