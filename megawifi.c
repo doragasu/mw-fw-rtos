@@ -76,8 +76,8 @@ const static uint8_t mwReadyCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
 	MW_CMD_IP_CURRENT, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_DEF_AP_CFG,
 	MW_CMD_DEF_AP_CFG_GET, MW_CMD_AP_LEAVE,
-	MW_CMD_TCP_CON, MW_CMD_TCP_BIND, MW_CMD_TCP_ACCEPT, MW_CMD_TCP_DISC,
-	MW_CMD_UDP_SET, MW_CMD_UDP_CLR, MW_CMD_SOCK_STAT, MW_CMD_PING,
+	MW_CMD_TCP_CON, MW_CMD_TCP_BIND, MW_CMD_CLOSE,
+	MW_CMD_UDP_SET, MW_CMD_SOCK_STAT, MW_CMD_PING,
 	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
 	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
@@ -145,6 +145,8 @@ typedef struct {
 	fd_set fds;
 	/// Maximum socket identifier value
 	int fdMax;
+	/// Address of the remote end, used in UDP sockets
+	struct sockaddr_in raddr[MW_MAX_SOCK];
 } MwData;
 /** \} */
 
@@ -262,62 +264,84 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 	xQueueSend(d.q, &m, portMAX_DELAY);
 }
 
+static int MwChannelCheck(int ch) {
+	// Check channel is valid and not in use.
+	if (ch >= LSD_MAX_CH) {
+		dprintf("Requested unavailable channel %d\n", ch);
+		return -1;
+	}
+	if (d.ss[ch - 1]) {
+		dprintf("Requested already in-use channel %d\n", ch);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int MwDnsLookup(const char* addr, const char *port,
+		struct addrinfo** addr_info) {
+	int err;
+	struct in_addr* raddr;
+	const struct addrinfo hints = {
+		.ai_family = AF_INET,
+		.ai_socktype = SOCK_STREAM,
+	};
+
+	err = getaddrinfo(addr, port, &hints, addr_info);
+
+	if(err || !*addr_info) {
+		dprintf("DNS lookup failure %d\n", err);
+		if(*addr_info) {
+			freeaddrinfo(*addr_info);
+		}
+		return -1;
+	}
+	// DNS lookup OK
+	raddr = &((struct sockaddr_in *)(*addr_info)->ai_addr)->sin_addr;
+	dprintf("DNS lookup succeeded. IP=%s\n", inet_ntoa(*raddr));
+
+	return 0;
+}
+
 /// Establish a connection with a remote server
 int MwFsmTcpCon(MwMsgInAddr* addr) {
-    const struct addrinfo hints = {
-        .ai_family = AF_INET,
-        .ai_socktype = SOCK_STREAM,
-    };
-    struct addrinfo *res;
-	struct in_addr *raddr;
+	struct addrinfo *res;
 	int err;
 	int s;
 
 	dprintf("Con. ch %d to %s:%s\n", addr->channel, addr->data,
 			addr->dst_port);
 
-	// Check channel is valid and not in use.
-	if (addr->channel >= LSD_MAX_CH) {
-		dprintf("Requested unavailable channel %d\n", addr->channel);
-		return -1;
-	}
-	if (d.ss[addr->channel - 1]) {
-		dprintf("Requested already in-use channel %d\n", addr->channel);
-		return -1;
+	err = MwChannelCheck(addr->channel);
+	if (err) {
+		return err;
 	}
 
 	// DNS lookup
-    err = getaddrinfo(addr->data, addr->dst_port, &hints, &res);
+	err = MwDnsLookup(addr->data, addr->dst_port, &res);
+	if (err) {
+		return err;
+	}
 
-    if(err != 0 || res == NULL) {
-		dprintf("DNS lookup failure %d\n", err);
-        if(res)
-            freeaddrinfo(res);
-        return -1;
-    }
-	// DNS lookup OK
-    raddr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
-    dprintf("DNS lookup succeeded. IP=%s\n", inet_ntoa(*raddr));
+	s = lwip_socket(res->ai_family, res->ai_socktype, 0);
+	if(s < 0) {
+		dprintf("... Failed to allocate socket.\n");
+		freeaddrinfo(res);
+		return -1;
+	}
 
-    s = lwip_socket(res->ai_family, res->ai_socktype, 0);
-    if(s < 0) {
-        dprintf("... Failed to allocate socket.\n");
-        freeaddrinfo(res);
-        return -1;
-    }
+	dprintf("... allocated socket\n");
 
-    dprintf("... allocated socket\n");
+	if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
+		lwip_close(s);
+		freeaddrinfo(res);
+		dprintf("... socket connect failed.\n");
+		return -1;
+	}
 
-    if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
-        lwip_close(s);
-        freeaddrinfo(res);
-        dprintf("... socket connect failed.\n");
-        return -1;
-    }
-
-    dprintf("... connected sock %d on ch %d\n", s, addr->channel);
-    freeaddrinfo(res);
-	// Record socket number and mark channel as in use.
+	dprintf("... connected sock %d on ch %d\n", s, addr->channel);
+	freeaddrinfo(res);
+	// Record socket number, type and mark channel as in use.
 	d.sock[addr->channel - 1] = s;
 	d.ss[addr->channel - 1] = MW_SOCK_TCP_EST;
 	// Record channel number associated with socket
@@ -337,15 +361,11 @@ int MwFsmTcpBind(MwMsgBind *b) {
 	int serv;
 	int optval = 1;
 	uint16_t port;
+	int err;
 
-	// Sanity checks
-	if ((b->channel < 1) || (b->channel > (LSD_MAX_CH - 1))) {
-		dprintf("Invalid channel %d requested!\n", b->channel);
-		return -1;
-	}
-	if ((d.sock[b->channel - 1] != -1) || (d.ss[b->channel - 1] |=
-				MW_SOCK_NONE)) {
-		dprintf("Channel %d already in use!\n", b->channel);
+	err = MwChannelCheck(b->channel);
+	if (err) {
+		return err;
 	}
 
 	// Create socket, set options
@@ -397,17 +417,17 @@ int MwFsmTcpBind(MwMsgBind *b) {
 }
 
 /// Closes a socket on the specified channel
-void MwFsmTcpDis(int ch) {
+static void MwSockClose(int ch) {
 	// TODO Might need to use a mutex to access socket variables.
 	// Close socket, remove from file descriptor set and mark as unused
-	ch--;
-	d.ss[ch] = MW_SOCK_NONE;
+	int idx = ch - 1;
 
-	lwip_close(d.sock[ch]);
-	FD_CLR(d.sock[ch], &d.fds);
+	lwip_close(d.sock[idx]);
+	FD_CLR(d.sock[idx], &d.fds);
 	// No channel associated with this socket
-	d.chan[d.sock[ch] - LWIP_SOCKET_OFFSET] = -1;
-	d.sock[ch] = -1; // No socket on this channel
+	d.chan[d.sock[idx] - LWIP_SOCKET_OFFSET] = -1;
+	d.sock[idx] = -1; // No socket on this channel
+	d.ss[idx] = MW_SOCK_NONE;
 }
 
 /// Creates a socket and binds it to a port
@@ -416,17 +436,13 @@ int MwTcpBind(int ch, uint16_t port) {
 	int s;
 	int optval = 1;
 	socklen_t addrlen = sizeof(struct sockaddr_in);
+	int err;
 
 	printf("Bind ch %d to port %d.\n", ch, port);
 
-	// Check channel is valid and not in use.
-	if (ch >= LSD_MAX_CH) {
-		dprintf("Requested unavailable channel %d\n", ch);
-		return -1;
-	}
-	if (d.chan[ch >= 0]) {
-		dprintf("Requested already in-use channel %d\n", ch);
-		return -1;
+	err = MwChannelCheck(ch);
+	if (err) {
+		return err;
 	}
 
 	if ((s = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -444,9 +460,9 @@ int MwTcpBind(int ch, uint16_t port) {
 	saddr.sin_port = lwip_htons(port);
 
 	// Bind to address
-	if (lwip_bind(s, (struct sockaddr*)&saddr, sizeof(saddr)) < -1) {
+	if (lwip_bind(s, (struct sockaddr*)&saddr, sizeof(saddr)) < 0) {
 		lwip_close(s);
-		dprintf("bind() failed!");
+		dprintf("bind() failed. Is TCP port in use?");
 	}
 
 	// Listen for incoming connections
@@ -462,6 +478,66 @@ int MwTcpBind(int ch, uint16_t port) {
 	return s;
 }
 
+static int MwUdpSet(MwMsgInAddr* addr) {
+	int err;
+	int s;
+	int idx;
+	unsigned int local_port;
+	struct addrinfo *raddr;
+	struct sockaddr_in local;
+
+	dprintf("UDP ch %d, port %s to addr %s:%s.\n", addr->channel,
+			addr->src_port, addr->data, addr->dst_port);
+
+	err = MwChannelCheck(addr->channel);
+	if (err) {
+		return err;
+	}
+	idx = addr->channel - 1;
+
+	local_port = atoi(addr->src_port);
+	if (!local_port) {
+		dprintf("Invalid src_port\n");
+		return -1;
+	}
+
+	// Create UDP socket
+	if ((s = lwip_socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
+		dprintf("Failed to create UDP socket\n");
+		return -1;
+	}
+
+	// Get address of remote end
+	err = MwDnsLookup(addr->data, addr->dst_port, &raddr);
+	if (err) {
+		lwip_close(s);
+		return -1;
+	}
+	d.raddr[idx] = *((struct sockaddr_in*)raddr->ai_addr);
+	freeaddrinfo(raddr);
+
+	memset((char*)&local, 0, sizeof(local));
+	local.sin_family = AF_INET;
+	local.sin_port = lwip_htons(local_port);
+	local.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+
+	if (lwip_bind(s, (struct sockaddr*)&local, sizeof(local)) < 0) {
+		dprintf("bind() failed. Is UDP port in use?\n");
+		lwip_close(s);
+		return -1;
+	}
+
+	printf("UDP socket bound\n");
+	// Record socket number and mark channel as in use.
+	d.sock[idx] = s;
+	d.chan[s - LWIP_SOCKET_OFFSET] = addr->channel;
+	d.ss[idx] = MW_SOCK_UDP_READY;
+	// Enable LSD channel
+	LsdChEnable(addr->channel);
+
+	return s;
+}
+
 /// Close all opened sockets
 void MwFsmCloseAll(void) {
 	int i;
@@ -469,7 +545,7 @@ void MwFsmCloseAll(void) {
 	for (i = 0; i < MW_MAX_SOCK; i++) {
 		if (d.ss[i] > 0) {
 			dprintf("Closing sock %d on ch %d\n", d.sock[i], i + 1);
-			MwFsmTcpDis(i + 1);
+			MwSockClose(i + 1);
 			LsdChDisable(i + 1);
 		}
 	}
@@ -902,7 +978,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_TCP_CON:
-			// Only works when on READY state
 			dprintf("TRYING TO CONNECT TCP SOCKET...\n");
 			reply.datalen = 0;
 			reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
@@ -917,18 +992,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
-		case MW_CMD_TCP_ACCEPT:
-			dprintf("TCP_ACCEPT unimplemented\n");
-			break;
-
-		case MW_CMD_TCP_DISC:
+		case MW_CMD_CLOSE:
 			reply.datalen = 0;
 			// If channel number OK, disconnect the socket on requested channel
 			if ((c->data[0] > 0) && (c->data[0] <= LSD_MAX_CH) &&
 					d.ss[c->data[0] - 1]) {
 				dprintf("Closing socket %d from channel %d\n",
 						d.sock[c->data[0] - 1], c->data[0]);
-				MwFsmTcpDis(c->data[0]);
+				MwSockClose(c->data[0]);
 				LsdChDisable(c->data[0]);
 				reply.cmd = MW_CMD_OK;
 			} else {
@@ -941,11 +1012,11 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_UDP_SET:
-			dprintf("UDP_SET unimplemented\n");
-			break;
-
-		case MW_CMD_UDP_CLR:
-			dprintf("UDP_CLR unimplemented\n");
+			dprintf("Configuring UDP socket...\n");
+			reply.datalen = 0;
+			reply.cmd = (MwUdpSet(&c->inAddr) < 0)?ByteSwapWord(
+					MW_CMD_ERROR):MW_CMD_OK;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_SOCK_STAT:
@@ -1174,6 +1245,45 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	return MW_OK;
 }
 
+static int MwUdpSend(int idx, const void *data, int len) {
+	struct sockaddr_in remote;
+	int s = d.sock[idx];
+	int sent;
+
+	if (d.raddr[idx].sin_addr.s_addr) {
+		sent = lwip_sendto(s, data, len, 0, (struct sockaddr*)
+				&d.raddr[idx], sizeof(struct sockaddr_in));
+	} else {
+		// Reuse mode, extract address from leading bytes
+		remote.sin_addr.s_addr = *((int32_t*)data);
+		remote.sin_port = *((int16_t*)(data + 4));
+		remote.sin_family = AF_INET;
+		remote.sin_len = sizeof(struct sockaddr_in);
+		memset(remote.sin_zero, 0, sizeof(remote.sin_zero));
+		sent = lwip_sendto(s, data + 6, len - 6, 0, (struct sockaddr*)
+				&remote, sizeof(struct sockaddr_in));
+	}
+
+	return sent;
+}
+
+static int MwSend(int ch, const void *data, int len) {
+	int idx = ch - 1;
+	int s = d.sock[idx];
+
+	switch (d.ss[idx]) {
+		case MW_SOCK_TCP_EST:
+			return lwip_send(s, data, len, 0);
+
+		case MW_SOCK_UDP_READY:
+			return MwUdpSend(idx, data, len);
+			break;
+
+		default:
+			return -1;
+	}
+}
+
 // Process messages during ready stage
 void MwFsmReady(MwFsmMsg *msg) {
 	// Pointer to the message buffer (from RX line).
@@ -1210,7 +1320,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 			} else {
 				// Forward message if channel is enabled.
 				if (b->ch < LSD_MAX_CH && d.ss[b->ch - 1]) {
-					if (send(d.sock[b->ch - 1], b->data, b->len, 0) != b->len) {
+					if (MwSend(b->ch, b->data, b->len) != b->len) {
 						dprintf("DEB: CH %d socket send error!\n", b->ch);
 						// TODO throw error event?
 						rep = (MwCmd*)msg->d;
@@ -1420,6 +1530,56 @@ static int MwAccept(int sock, int ch) {
 	return 0;
 }
 
+static int MwUdpRecv(int idx, char *buf) {
+	ssize_t recvd;
+	int s = d.sock[idx];
+	struct sockaddr_in remote;
+	socklen_t addr_len = sizeof(remote);
+
+	if (d.raddr->sin_addr.s_addr) {
+		// Receive only from specified address
+		recvd = lwip_recvfrom(s, buf, LSD_MAX_LEN, 0,
+				(struct sockaddr*)&remote, &addr_len);
+		if (recvd > 0) {
+			if (remote.sin_addr.s_addr != d.raddr[idx].sin_addr.s_addr) {
+				dprintf("Discarding UDP packet from unknown addr\n");
+				recvd = -1;
+			}
+		}
+	} else {
+		// Reuse mode, data is preceded by remote IPv4 and port
+		recvd = lwip_recvfrom(s, buf + 6, LSD_MAX_LEN - 6, 0,
+				(struct sockaddr*)&remote, &addr_len);
+		if (recvd > 0) {
+			*((uint32_t*)buf) = remote.sin_addr.s_addr;
+			*((uint16_t*)(buf + 4)) = remote.sin_port;
+			recvd += 6;
+		}
+	}
+
+	return recvd;
+}
+
+static int MwRecv(int ch, char *buf, int len) {
+	int idx = ch - 1;
+	int s = d.sock[idx];
+	// No IPv6 support yet
+	ssize_t recvd;
+	UNUSED_PARAM(len);
+
+	switch(d.ss[idx]) {
+		case MW_SOCK_TCP_EST:
+			return lwip_recv(s, buf, LSD_MAX_LEN, 0);
+
+		case MW_SOCK_UDP_READY:
+			recvd = MwUdpRecv(idx, buf);
+			return recvd;
+
+		default:
+			return -1;
+	}
+}
+
 /// Polls sockets for data or incoming connections using select()
 /// \note Maybe MwWiFiStatPollTsk() task should be merged with this one.
 void MwFsmSockTsk(void *pvParameters) {
@@ -1440,8 +1600,7 @@ void MwFsmSockTsk(void *pvParameters) {
 
 	while (1) {
 		gpio_write(LED_GPIO_PIN, (led++)&1);
-		// Update list of active sockets (NOTE: investigate if select also
-		// works with UDP sockets!)
+		// Update list of active sockets
 		readset = d.fds;
 
 		// Wait until event or timeout
@@ -1456,7 +1615,6 @@ void MwFsmSockTsk(void *pvParameters) {
 		}
 		// If select returned 0, there was a timeout
 		if (0 == retval) continue;
-		dprintf("select()=%d\n", retval);
 		// Poll the socket for data, and forward through the associated
 		// channel.
 		max = d.fdMax;
@@ -1466,9 +1624,9 @@ void MwFsmSockTsk(void *pvParameters) {
 				ch = d.chan[i - LWIP_SOCKET_OFFSET];
 				if (d.ss[ch - 1] != MW_SOCK_TCP_LISTEN) {
 					dprintf("Rx: sock=%d, ch=%d\n", i, ch);
-					if ((recvd = recv(i, buf, LSD_MAX_LEN, 0)) < 0) {
+					if ((recvd = MwRecv(ch, (char*)buf, LSD_MAX_LEN)) < 0) {
 						// Error!
-						MwFsmTcpDis(ch);
+						MwSockClose(ch);
 						LsdChDisable(ch);
 						dprintf("Error %d receiving from socket!\n", recvd);
 					} else if (0 == recvd) {
@@ -1477,7 +1635,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						// a 0-byte reception, for the client to be able to
 						// check server state and close the connection.
 						dprintf("Received 0!\n");
-						MwFsmTcpDis(ch);
+						MwSockClose(ch);
 						dprintf("Socket closed!\n");
 						MwFsmRaiseChEvent(ch);
 						// Send a 0-byte frame for the receiver to wake up and

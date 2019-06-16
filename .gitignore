@@ -1,2 +1,5 @@
 build
 firmware
+*.vim
+.ycm_extra_conf.pyc
+.*.swp
