@@ -65,7 +65,7 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
 	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_DEF_AP_CFG,
 	MW_CMD_DEF_AP_CFG_GET, MW_CMD_AP_JOIN,
-	MW_CMD_SNTP_CFG, /*MW_CMD_SNTP_CFG_GET,*/ MW_CMD_DATETIME, MW_CMD_DT_SET,
+	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
 	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
 	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET
@@ -762,6 +762,16 @@ void MwInit(void) {
 	xQueueSend(d.q, &m, portMAX_DELAY);
 }
 
+static int MwSntpCfgGet(MwMsgSntpCfg *sntp) {
+	sntp->dst = cfg.dst;
+	sntp->tz = cfg.timezone;
+	sntp->upDelay = ByteSwapWord(cfg.ntpUpDelay);
+	memcmp(sntp->servers, cfg.ntpPool, cfg.ntpPoolLen);
+
+	return sizeof(sntp->dst) + sizeof(sntp->tz) + sizeof(sntp->upDelay) +
+		cfg.ntpPoolLen;
+}
+
 /// Process command requests (coming from the serial line)
 int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
@@ -1058,7 +1068,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SNTP_CFG_GET:
-			dprintf("SNTP_CFG_GET unimplemented\n");
+			replen = MwSntpCfgGet(&reply.sntpCfg);
+			reply.datalen = ByteSwapWord(replen);
+			reply.cmd = MW_CMD_OK;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_DATETIME:
