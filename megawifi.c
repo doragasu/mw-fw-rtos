@@ -68,7 +68,7 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
 	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
-	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET
+	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET, MW_CMD_LOG
 };
 
 /// Commands allowed while in READY state
@@ -81,7 +81,7 @@ const static uint8_t mwReadyCmds[] = {
 	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
 	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
-	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET
+	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET, MW_CMD_LOG
 };
 
 /*
@@ -573,6 +573,8 @@ static void MwSetDefaultCfg(void) {
 	// Copy the 3 default NTP servers
 	*(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(cfg.ntpPool, MW_SNTP_SERV_0),
 		MW_SNTP_SERV_1), MW_SNTP_SERV_2)) = '\0';
+	cfg.ntpPoolLen = sizeof(MW_SNTP_SERV_0) + sizeof(MW_SNTP_SERV_1) +
+		sizeof(MW_SNTP_SERV_2) + 1;
 	cfg.ntpUpDelay = 300;	// Update each 5 minutes
 	// NOTE: Checksum is only computed before storing configuration
 }
@@ -668,7 +670,7 @@ void MwApJoin(uint8_t n) {
 	sdk_wifi_set_opmode(STATION_MODE);
 	sdk_wifi_station_set_config(&stcfg);
 	sdk_wifi_station_connect();
-	dprintf("AP JOIN!\n");
+	dprintf("AP ASSOC %d\n", n);
 	d.s.sys_stat = MW_ST_AP_JOIN;
 }
 
@@ -766,7 +768,7 @@ static int MwSntpCfgGet(MwMsgSntpCfg *sntp) {
 	sntp->dst = cfg.dst;
 	sntp->tz = cfg.timezone;
 	sntp->upDelay = ByteSwapWord(cfg.ntpUpDelay);
-	memcmp(sntp->servers, cfg.ntpPool, cfg.ntpPoolLen);
+	memcpy(sntp->servers, cfg.ntpPool, cfg.ntpPoolLen);
 
 	return sizeof(sntp->dst) + sizeof(sntp->tz) + sizeof(sntp->upDelay) +
 		cfg.ntpPoolLen;
@@ -966,6 +968,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			if ((c->data[0] >= MW_NUM_AP_CFGS) ||
 					!(cfg.ap[c->data[0]].ssid[0])) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+				dprintf("Invalid AP_JOIN on config %d\n", c->data[0]);
 			} else {
 				MwApJoin(c->data[0]);
 				reply.cmd = MW_CMD_OK;
@@ -1050,13 +1053,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_SNTP_CFG:
 			reply.datalen = 0;
-			cfg.ntpUpDelay = ByteSwapWord(c->sntpCfg.upDelay);
 			cfg.ntpPoolLen = len - 4;
 			if ((cfg.ntpPoolLen > MW_NTP_POOL_MAXLEN) ||
 					(c->sntpCfg.tz < -11) || (c->sntpCfg.tz > 13)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
+				cfg.ntpUpDelay = ByteSwapWord(c->sntpCfg.upDelay);
 				cfg.timezone = c->sntpCfg.tz;
+				cfg.dst = c->sntpCfg.dst;
 				memcpy(cfg.ntpPool, c->sntpCfg.servers, cfg.ntpPoolLen);
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
@@ -1071,6 +1075,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			replen = MwSntpCfgGet(&reply.sntpCfg);
 			reply.datalen = ByteSwapWord(replen);
 			reply.cmd = MW_CMD_OK;
+			dprintf("sending configuration (%d bytes)\n", replen);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
@@ -1249,6 +1254,13 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			}
 			reply.datalen = ByteSwapWord(replen);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
+		case MW_CMD_LOG:
+			puts((char*)c->data);
+			reply.cmd = MW_CMD_OK;
+			reply.datalen = 0;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		default:
