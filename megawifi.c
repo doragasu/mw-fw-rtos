@@ -430,64 +430,13 @@ static void MwSockClose(int ch) {
 	d.ss[idx] = MW_SOCK_NONE;
 }
 
-/// Creates a socket and binds it to a port
-int MwTcpBind(int ch, uint16_t port) {
-	struct sockaddr_in saddr;	// Address of the server
-	int s;
-	int optval = 1;
-	socklen_t addrlen = sizeof(struct sockaddr_in);
-	int err;
-
-	printf("Bind ch %d to port %d.\n", ch, port);
-
-	err = MwChannelCheck(ch);
-	if (err) {
-		return err;
-	}
-
-	if ((s = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0)
-		dprintf("Could not create listener!");
-	dprintf("Created listener socket number %d.\n", s);
-	// Allow address reuse
-	if (lwip_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &optval,
-				sizeof(int)) < 0) dprintf("setsockopt() failed!");
-
-	// Fill in address information
-	memset((char*)&saddr, 0, sizeof(saddr));
-	saddr.sin_family = AF_INET;
-	saddr.sin_len = addrlen;
-	saddr.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
-	saddr.sin_port = lwip_htons(port);
-
-	// Bind to address
-	if (lwip_bind(s, (struct sockaddr*)&saddr, sizeof(saddr)) < 0) {
-		lwip_close(s);
-		dprintf("bind() failed. Is TCP port in use?");
-	}
-
-	// Listen for incoming connections
-	if (lwip_listen(s, 1) < 0) dprintf("listen() failed!");
-	printf("Server socket created!\n");
-	// Record socket number and mark channel as in use.
-	d.sock[ch - 1] = s;
-	d.chan[ch - 1] = TRUE;
-	d.ss[ch - 1] = MW_SOCK_TCP_LISTEN;
-	// Enable LSD channel
-	LsdChEnable(ch);
-
-	return s;
-}
-
 static int MwUdpSet(MwMsgInAddr* addr) {
 	int err;
 	int s;
 	int idx;
 	unsigned int local_port;
+	unsigned int remote_port;
 	struct addrinfo *raddr;
-	struct sockaddr_in local;
-
-	dprintf("UDP ch %d, port %s to addr %s:%s.\n", addr->channel,
-			addr->src_port, addr->data, addr->dst_port);
 
 	err = MwChannelCheck(addr->channel);
 	if (err) {
@@ -496,44 +445,57 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 	idx = addr->channel - 1;
 
 	local_port = atoi(addr->src_port);
-	if (!local_port) {
-		dprintf("Invalid src_port\n");
-		return -1;
-	}
+	remote_port = atoi(addr->dst_port);
 
-	// Create UDP socket
 	if ((s = lwip_socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
 		dprintf("Failed to create UDP socket\n");
 		return -1;
 	}
 
-	// Get address of remote end
-	err = MwDnsLookup(addr->data, addr->dst_port, &raddr);
-	if (err) {
-		lwip_close(s);
+	if (!remote_port && addr->data[0]) {
+		// Communication with remote peer
+		dprintf("UDP ch %d, port %d to addr %s:%d.\n", addr->channel,
+				local_port, addr->data, remote_port);
+
+		err = MwDnsLookup(addr->data, addr->dst_port, &raddr);
+		if (err) {
+			lwip_close(s);
+			return -1;
+		}
+		d.raddr[idx] = *((struct sockaddr_in*)raddr->ai_addr);
+		freeaddrinfo(raddr);
+	} else if (local_port) {
+		// Server in reuse mode
+		dprintf("UDP ch %d, src port %d.\n", addr->channel, local_port);
+
+		memset(d.raddr[idx].sin_zero, 0, sizeof(d.raddr[idx].sin_zero));
+		d.raddr[idx].sin_len = sizeof(struct sockaddr_in);
+		d.raddr[idx].sin_family = AF_INET;
+		d.raddr[idx].sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+		d.raddr[idx].sin_port = lwip_htons(local_port);
+	} else {
+		dprintf("Invalid UDP socket data\n");
 		return -1;
 	}
-	d.raddr[idx] = *((struct sockaddr_in*)raddr->ai_addr);
-	freeaddrinfo(raddr);
 
-	memset((char*)&local, 0, sizeof(local));
-	local.sin_family = AF_INET;
-	local.sin_port = lwip_htons(local_port);
-	local.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
-
-	if (lwip_bind(s, (struct sockaddr*)&local, sizeof(local)) < 0) {
+	if (lwip_bind(s, (struct sockaddr*)&d.raddr[idx],
+				sizeof(struct sockaddr_in)) < 0) {
 		dprintf("bind() failed. Is UDP port in use?\n");
 		lwip_close(s);
 		return -1;
 	}
 
-	printf("UDP socket bound\n");
+	printf("UDP socket %d bound\n", s);
 	// Record socket number and mark channel as in use.
 	d.sock[idx] = s;
 	d.chan[s - LWIP_SOCKET_OFFSET] = addr->channel;
 	d.ss[idx] = MW_SOCK_UDP_READY;
 	// Enable LSD channel
 	LsdChEnable(addr->channel);
+
+	// Add listener to the FD set
+	FD_SET(s, &d.fds);
+	d.fdMax = MAX(s, d.fdMax);
 
 	return s;
 }
