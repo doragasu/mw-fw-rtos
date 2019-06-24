@@ -68,7 +68,7 @@ const static uint8_t mwIdleCmds[] = {
 	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
 	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
 	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
-	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET, MW_CMD_LOG
+	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET, MW_CMD_LOG, MW_CMD_FACTORY_RESET
 };
 
 /// Commands allowed while in READY state
@@ -1260,6 +1260,17 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			puts((char*)c->data);
 			reply.cmd = MW_CMD_OK;
 			reply.datalen = 0;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_FACTORY_RESET:
+			reply.datalen = 0;
+			MwSetDefaultCfg();
+			if (MwNvCfgSave() < 0) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				reply.cmd = MW_CMD_OK;
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
