@@ -58,30 +58,41 @@ typedef enum {
 	MW_FD_REM			///< Remove socket from the FD set
 } MwFdOps;
 
-// TODO: Maybe this could be optimized by changing the data to define
-// command ranges, instead of commands
 /// Commands allowed while in IDLE state
-const static uint8_t mwIdleCmds[] = {
-	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_SCAN, MW_CMD_AP_CFG,
-	MW_CMD_AP_CFG_GET, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_DEF_AP_CFG,
-	MW_CMD_DEF_AP_CFG_GET, MW_CMD_AP_JOIN,
-	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
-	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
-	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
-	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET, MW_CMD_LOG, MW_CMD_FACTORY_RESET
+const static uint32_t idleCmdMask[2] = {
+	(1<<MW_CMD_VERSION)               | (1<<MW_CMD_ECHO)                |
+	(1<<MW_CMD_AP_SCAN)               | (1<<MW_CMD_AP_CFG)              |
+	(1<<MW_CMD_AP_CFG_GET)            | (1<<MW_CMD_IP_CFG)              |
+	(1<<MW_CMD_IP_CFG_GET)            | (1<<MW_CMD_DEF_AP_CFG)          |
+	(1<<MW_CMD_DEF_AP_CFG_GET)        | (1<<MW_CMD_AP_JOIN)             |
+	(1<<MW_CMD_SNTP_CFG)              | (1<<MW_CMD_SNTP_CFG_GET)        |
+	(1<<MW_CMD_DATETIME)              | (1<<MW_CMD_DT_SET)              |
+	(1<<MW_CMD_FLASH_WRITE)           | (1<<MW_CMD_FLASH_READ)          |
+	(1<<MW_CMD_FLASH_ERASE)           | (1<<MW_CMD_FLASH_ID)            |
+	(1<<MW_CMD_SYS_STAT)              | (1<<MW_CMD_DEF_CFG_SET),
+	(1<<(MW_CMD_HRNG_GET - 32))       | (1<<(MW_CMD_BSSID_GET - 32))    |
+	(1<<(MW_CMD_GAMERTAG_SET - 32))   | (1<<(MW_CMD_GAMERTAG_GET - 32)) |
+	(1<<(MW_CMD_LOG - 32))            | (1<<(MW_CMD_FACTORY_RESET - 32))
 };
 
 /// Commands allowed while in READY state
-const static uint8_t mwReadyCmds[] = {
-	MW_CMD_VERSION, MW_CMD_ECHO, MW_CMD_AP_CFG, MW_CMD_AP_CFG_GET,
-	MW_CMD_IP_CURRENT, MW_CMD_IP_CFG, MW_CMD_IP_CFG_GET, MW_CMD_DEF_AP_CFG,
-	MW_CMD_DEF_AP_CFG_GET, MW_CMD_AP_LEAVE,
-	MW_CMD_TCP_CON, MW_CMD_TCP_BIND, MW_CMD_CLOSE,
-	MW_CMD_UDP_SET, MW_CMD_SOCK_STAT, MW_CMD_PING,
-	MW_CMD_SNTP_CFG, MW_CMD_SNTP_CFG_GET, MW_CMD_DATETIME, MW_CMD_DT_SET,
-	MW_CMD_FLASH_WRITE, MW_CMD_FLASH_READ, MW_CMD_FLASH_ERASE, MW_CMD_FLASH_ID,
-	MW_CMD_SYS_STAT, MW_CMD_DEF_CFG_SET, MW_CMD_HRNG_GET, MW_CMD_BSSID_GET,
-	MW_CMD_GAMERTAG_SET, MW_CMD_GAMERTAG_GET, MW_CMD_LOG
+const static uint32_t readyCmdMask[2] = {
+	(1<<MW_CMD_VERSION)              | (1<<MW_CMD_ECHO)                 |
+	(1<<MW_CMD_AP_CFG)               | (1<<MW_CMD_AP_CFG_GET)           |
+	(1<<MW_CMD_IP_CURRENT)           | (1<<MW_CMD_IP_CFG)               |
+	(1<<MW_CMD_IP_CFG_GET)           | (1<<MW_CMD_DEF_AP_CFG)           |
+	(1<<MW_CMD_DEF_AP_CFG_GET)       | (1<<MW_CMD_AP_LEAVE)             |
+	(1<<MW_CMD_TCP_CON)              | (1<<MW_CMD_TCP_BIND)             |
+	(1<<MW_CMD_CLOSE)                | (1<<MW_CMD_UDP_SET)              |
+	(1<<MW_CMD_SOCK_STAT)            | (1<<MW_CMD_PING)                 |
+	(1<<MW_CMD_SNTP_CFG)             | (1<<MW_CMD_SNTP_CFG_GET)         |
+	(1<<MW_CMD_DATETIME)             | (1<<MW_CMD_DT_SET)               |
+	(1<<MW_CMD_FLASH_WRITE)          | (1<<MW_CMD_FLASH_READ)           |
+	(1<<MW_CMD_FLASH_ERASE)          | (1<<MW_CMD_FLASH_ID)             |
+	(1<<MW_CMD_SYS_STAT)             | (1<<MW_CMD_DEF_CFG_SET),
+	(1<<(MW_CMD_HRNG_GET - 32))      | (1<<(MW_CMD_BSSID_GET - 32))     |
+	(1<<(MW_CMD_GAMERTAG_SET - 32))  | (1<<(MW_CMD_GAMERTAG_GET - 32))  |
+	(1<<(MW_CMD_LOG - 32))
 };
 
 /*
@@ -163,7 +174,7 @@ static uint8_t buf[LSD_MAX_LEN];
 MwMsgSysStat s;
 
 // Prints data of a WiFi station
-void PrintStationData(struct sdk_bss_info *bss) {
+static void PrintStationData(struct sdk_bss_info *bss) {
 	AUTH_MODE atmp;
 	// Character strings related to supported authentication modes
 	const char *authStr[AUTH_MAX + 1] = {
@@ -177,7 +188,7 @@ void PrintStationData(struct sdk_bss_info *bss) {
 }
 
 /// Prints a list of found scanned stations
-void MwBssListPrint(struct sdk_bss_info *bss) {
+static void MwBssListPrint(struct sdk_bss_info *bss) {
 	// Traverse the bss list, ignoring first entry
 	while (bss->next.stqe_next != NULL) {
 		bss = bss->next.stqe_next;
@@ -187,14 +198,14 @@ void MwBssListPrint(struct sdk_bss_info *bss) {
 }
 
 // Raises an event pending flag on requested channel
-inline void MwFsmRaiseChEvent(int ch) {
+static void MwFsmRaiseChEvent(int ch) {
 	if ((ch < 1) || (ch >= LSD_MAX_CH)) return;
 
 	s.ch_ev |= 1<<ch;
 }
 
 // Clears an event pending flag on requested channel
-inline void MwFsmClearChEvent(int ch) {
+static void MwFsmClearChEvent(int ch) {
 	if ((ch < 1) || (ch >= LSD_MAX_CH)) return;
 
 	s.ch_ev &= ~(1<<ch);
@@ -304,7 +315,7 @@ static int MwDnsLookup(const char* addr, const char *port,
 }
 
 /// Establish a connection with a remote server
-int MwFsmTcpCon(MwMsgInAddr* addr) {
+static int MwFsmTcpCon(MwMsgInAddr* addr) {
 	struct addrinfo *res;
 	int err;
 	int s;
@@ -355,7 +366,7 @@ int MwFsmTcpCon(MwMsgInAddr* addr) {
 	return s;
 }
 
-int MwFsmTcpBind(MwMsgBind *b) {
+static int MwFsmTcpBind(MwMsgBind *b) {
 	struct sockaddr_in saddr;
 	socklen_t addrlen = sizeof(saddr);
 	int serv;
@@ -501,7 +512,7 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 }
 
 /// Close all opened sockets
-void MwFsmCloseAll(void) {
+static void MwFsmCloseAll(void) {
 	int i;
 
 	for (i = 0; i < MW_MAX_SOCK; i++) {
@@ -513,16 +524,19 @@ void MwFsmCloseAll(void) {
 	}
 }
 
-/// Check if a command is on a list
-inline uint8_t MwCmdInList(uint8_t cmd, const uint8_t *list,
-		                   uint8_t listLen) {
-	uint8_t i;
+/// Check if a command is on a command list mask
+static int MwCmdInList(uint8_t cmd, const uint32_t list[2]) {
 
-	for (i = 0; (i < listLen) && (list[i] != cmd); i++);
-	return !(i == listLen);
+	if (cmd < 32) {
+		return (((1<<cmd) & list[0]) != 0);
+	} else if (cmd < 64) {
+		return (((1<<(cmd - 32)) & list[1]) != 0);
+	} else {
+		return 0;
+	}
 }
 
-void PrintHex(uint8_t data[], uint16_t len) {
+static void PrintHex(uint8_t data[], uint16_t len) {
 	uint16_t i;
 
 	for (i = 0; i < len; i++) printf("%02x", data[i]);
@@ -1303,8 +1317,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 			// to the appropiate socket.
 			if (MW_CTRL_CH == b->ch) {
 				// Check command is allowed on READY state
-				if (MwCmdInList(b->cmd.cmd>>8, mwReadyCmds,
-							sizeof(mwReadyCmds))) {
+				if (MwCmdInList(b->cmd.cmd>>8, readyCmdMask)) {
 					MwFsmCmdProc((MwCmd*)b, b->len);
 				} else {
 					dprintf("Command %d not allowed on READY state\n",
@@ -1446,8 +1459,7 @@ static void MwFsm(MwFsmMsg *msg) {
 				dprintf("Serial recvd %d bytes.\n", b->len);
 				if (MW_CTRL_CH == b->ch) {
 					// Check command is allowed on IDLE state
-					if (MwCmdInList(b->cmd.cmd>>8, mwIdleCmds,
-								sizeof(mwIdleCmds))) {
+					if (MwCmdInList(b->cmd.cmd>>8, idleCmdMask)) {
 						MwFsmCmdProc((MwCmd*)b, b->len);
 					} else {
 						dprintf("Command %d not allowed on IDLE state\n",
