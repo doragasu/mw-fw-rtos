@@ -1267,13 +1267,14 @@ static int MwUdpSend(int idx, const void *data, int len) {
 				&d.raddr[idx], sizeof(struct sockaddr_in));
 	} else {
 		// Reuse mode, extract address from leading bytes
+		// NOTE: d.raddr[idx].sin_addr.s_addr == INADDR_ANY
 		remote.sin_addr.s_addr = *((int32_t*)data);
 		remote.sin_port = *((int16_t*)(data + 4));
 		remote.sin_family = AF_INET;
 		remote.sin_len = sizeof(struct sockaddr_in);
 		memset(remote.sin_zero, 0, sizeof(remote.sin_zero));
 		sent = lwip_sendto(s, data + 6, len - 6, 0, (struct sockaddr*)
-				&remote, sizeof(struct sockaddr_in));
+				&remote, sizeof(struct sockaddr_in)) + 6;
 	}
 
 	return sent;
