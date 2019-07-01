@@ -129,7 +129,7 @@ int LsdChDisable(uint8_t ch) {
  * \return -1 if there was an error, or the number of characterse sent
  * 		   otherwise.
  ****************************************************************************/
-int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
+int LsdSend(const uint8_t *data, uint16_t len, uint8_t ch) {
 	char scratch[3];
 
 	if (len > MW_MSG_MAX_BUFLEN || ch >= LSD_MAX_CH) {

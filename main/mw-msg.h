@@ -52,7 +52,6 @@ typedef enum {
 
 /// Maximum buffer length (bytes)
 #define MW_MSG_MAX_BUFLEN	CONFIG_TCP_MSS
-//#define MW_MSG_MAX_BUFLEN	1376
 
 #define MW_CMD_MAX_BUFLEN	(MW_MSG_MAX_BUFLEN - 4)
 
@@ -190,6 +189,25 @@ typedef union {
 //	uint8_t ch:4;			///< Channel with the pending event
 //} MwSysStat;
 
+enum mw_http_req_type {
+		MW_HTTP_NONE = 0,
+		MW_HTTP_GET,
+		MW_HTTP_HEAD,
+		MW_HTTP_POST,
+		MW_HTTP_PUT,
+		MW_HTTP_DELETE,
+		MW_HTTP_MAX
+} __attribute__((packed));
+
+typedef struct {
+	char dst_port[6];
+	char src_port[6];
+	uint32_t payload_len;
+	enum mw_http_req_type req_type;
+	// both address and URI, MW_CMD_MAX_BUFLEN - 6 - 6 - 4 - 1
+	char addr_plus_uri[];
+} MwMsgHttpReq;
+
 /** \} *//** \addtogroup MwApi MwCmd Command sent to system FSM
  *  \{ */
 typedef struct {
@@ -200,6 +218,7 @@ typedef struct {
 	union {
 		uint8_t ch;		// Channel number for channel related requests
 		uint8_t data[MW_CMD_MAX_BUFLEN];
+		uint16_t wData[MW_CMD_MAX_BUFLEN / sizeof(uint16_t)];
 		uint32_t dwData[MW_CMD_MAX_BUFLEN / sizeof(uint32_t)];
 		MwMsgInAddr inAddr;
 		MwMsgApCfg apCfg;

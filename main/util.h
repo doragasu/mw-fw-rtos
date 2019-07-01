@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <esp_log.h>
 
 #ifndef TRUE
@@ -15,6 +16,11 @@
 #ifndef NULL
 #define NULL ((void*)0)
 #endif
+
+/// Stringify token, helper macro
+#define _STR(x)		#x
+/// Stringify token
+#define STR(x)		_STR(x)
 
 /// Remove compiler warnings when not using a function parameter
 #define UNUSED_PARAM(x)		(void)x
@@ -103,6 +109,18 @@ static inline char *StrCpyDst(char *dst, const char *src) {
 	*dst = '\0';
 
 	return dst;
+}
+
+static inline int itemizer(const char *input, const char **item, int max_tokens)
+{
+	int i;
+
+	for (i = 0; i < max_tokens && *input; i++) {
+		item[i] = input;
+		input += strlen(input) + 1;
+	}
+
+	return i;
 }
 
 #endif //_UTIL_H_

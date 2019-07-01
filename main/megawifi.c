@@ -3,6 +3,8 @@
  *
  * \Author Jesus Alonso (idoragasu)
  * \date   2016
+ * \warning BUG: Sending data using LsdSend() function has not yet been
+ * serialized!!!
  ****************************************************************************/
 
 // Newlib
@@ -40,12 +42,11 @@
 #include <spi_flash.h>
 
 #include "megawifi.h"
+#include "net_util.h"
 #include "lsd.h"
 #include "util.h"
 #include "led.h"
-
-/// Configuration address, stored on the last sector 4 KiB of the first 512 KiB
-#define MW_CFG_FLASH_ADDR	((512 - 4) * 1024)
+#include "http.h"
 
 /// Flash sector number where the configuration is stored
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
@@ -64,6 +65,26 @@ typedef enum {
 	MW_FD_REM			///< Remove socket from the FD set
 } MwFdOps;
 
+/// Status of the HTTP command
+enum http_stat {
+	MW_HTTP_ST_IDLE = 0,
+	MW_HTTP_ST_OPEN_CONTENT_WAIT,
+	MW_HTTP_ST_FINISH_WAIT,
+	MW_HTTP_ST_FINISH_CONTENT_WAIT,
+	MW_HTTP_ST_CERT_SET,
+	MW_HTTP_ST_ERROR,
+	MW_HTTP_ST_STAT_MAX
+};
+
+struct http_data {
+	/// HTTP client handle
+	esp_http_client_handle_t h;
+	/// HTTP machine state
+	enum http_stat s;
+	/// Remaining bytes to read/write
+	int remaining;
+};
+
 /// Commands allowed while in IDLE state
 const static uint32_t idleCmdMask[2] = {
 	(1<<MW_CMD_VERSION)               | (1<<MW_CMD_ECHO)                |
@@ -79,27 +100,34 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<(MW_CMD_HRNG_GET - 32))       | (1<<(MW_CMD_BSSID_GET - 32))    |
 	(1<<(MW_CMD_GAMERTAG_SET - 32))   | (1<<(MW_CMD_GAMERTAG_GET - 32)) |
 	(1<<(MW_CMD_LOG - 32))            | (1<<(MW_CMD_FACTORY_RESET - 32))|
-	(1<<(MW_CMD_SLEEP - 32))
+	(1<<(MW_CMD_SLEEP - 32))          | (1<<(MW_CMD_HTTP_URL_SET - 32)) |
+	(1<<(MW_CMD_HTTP_METHOD_SET - 32))| (1<<(MW_CMD_HTTP_CERT_SET - 32))|
+	(1<<(MW_CMD_HTTP_HDR_ADD - 32))   | (1<<(MW_CMD_HTTP_HDR_DEL - 32)) |
+	(1<<(MW_CMD_HTTP_CLEANUP - 32))
 };
 
 /// Commands allowed while in READY state
 const static uint32_t readyCmdMask[2] = {
-	(1<<MW_CMD_VERSION)              | (1<<MW_CMD_ECHO)                 |
-	(1<<MW_CMD_AP_CFG)               | (1<<MW_CMD_AP_CFG_GET)           |
-	(1<<MW_CMD_IP_CURRENT)           | (1<<MW_CMD_IP_CFG)               |
-	(1<<MW_CMD_IP_CFG_GET)           | (1<<MW_CMD_DEF_AP_CFG)           |
-	(1<<MW_CMD_DEF_AP_CFG_GET)       | (1<<MW_CMD_AP_LEAVE)             |
-	(1<<MW_CMD_TCP_CON)              | (1<<MW_CMD_TCP_BIND)             |
-	(1<<MW_CMD_CLOSE)                | (1<<MW_CMD_UDP_SET)              |
-	(1<<MW_CMD_SOCK_STAT)            | (1<<MW_CMD_PING)                 |
-	(1<<MW_CMD_SNTP_CFG)             | (1<<MW_CMD_SNTP_CFG_GET)         |
-	(1<<MW_CMD_DATETIME)             | (1<<MW_CMD_DT_SET)               |
-	(1<<MW_CMD_FLASH_WRITE)          | (1<<MW_CMD_FLASH_READ)           |
-	(1<<MW_CMD_FLASH_ERASE)          | (1<<MW_CMD_FLASH_ID)             |
+	(1<<MW_CMD_VERSION)              | (1<<MW_CMD_ECHO)                  |
+	(1<<MW_CMD_AP_CFG)               | (1<<MW_CMD_AP_CFG_GET)            |
+	(1<<MW_CMD_IP_CURRENT)           | (1<<MW_CMD_IP_CFG)                |
+	(1<<MW_CMD_IP_CFG_GET)           | (1<<MW_CMD_DEF_AP_CFG)            |
+	(1<<MW_CMD_DEF_AP_CFG_GET)       | (1<<MW_CMD_AP_LEAVE)              |
+	(1<<MW_CMD_TCP_CON)              | (1<<MW_CMD_TCP_BIND)              |
+	(1<<MW_CMD_CLOSE)                | (1<<MW_CMD_UDP_SET)               |
+	(1<<MW_CMD_SOCK_STAT)            | (1<<MW_CMD_PING)                  |
+	(1<<MW_CMD_SNTP_CFG)             | (1<<MW_CMD_SNTP_CFG_GET)          |
+	(1<<MW_CMD_DATETIME)             | (1<<MW_CMD_DT_SET)                |
+	(1<<MW_CMD_FLASH_WRITE)          | (1<<MW_CMD_FLASH_READ)            |
+	(1<<MW_CMD_FLASH_ERASE)          | (1<<MW_CMD_FLASH_ID)              |
 	(1<<MW_CMD_SYS_STAT)             | (1<<MW_CMD_DEF_CFG_SET),
-	(1<<(MW_CMD_HRNG_GET - 32))      | (1<<(MW_CMD_BSSID_GET - 32))     |
-	(1<<(MW_CMD_GAMERTAG_SET - 32))  | (1<<(MW_CMD_GAMERTAG_GET - 32))  |
-	(1<<(MW_CMD_LOG - 32))           | (1<<(MW_CMD_SLEEP - 32))
+	(1<<(MW_CMD_HRNG_GET - 32))      | (1<<(MW_CMD_BSSID_GET - 32))      |
+	(1<<(MW_CMD_GAMERTAG_SET - 32))  | (1<<(MW_CMD_GAMERTAG_GET - 32))   |
+	(1<<(MW_CMD_LOG - 32))           | (1<<(MW_CMD_SLEEP - 32))          |
+	(1<<(MW_CMD_HTTP_URL_SET - 32))  | (1<<(MW_CMD_HTTP_METHOD_SET - 32))|
+	(1<<(MW_CMD_HTTP_CERT_SET - 32)) | (1<<(MW_CMD_HTTP_HDR_ADD - 32))   |
+	(1<<(MW_CMD_HTTP_HDR_DEL - 32))  | (1<<(MW_CMD_HTTP_OPEN - 32))      |
+	(1<<(MW_CMD_HTTP_FINISH - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32))
 };
 
 /*
@@ -154,8 +182,6 @@ typedef struct {
 	/// An extra socket placeholder is reserved because of server sockets that
 	/// might use a temporary additional socket during the accept() stage.
 	int8_t chan[MW_MAX_SOCK + 1];
-//	/// Timer used to update SNTP clock.
-//	os_timer_t sntpTimer;
 	/// FSM queue for event reception
 	QueueHandle_t q;
 	/// Sleep inactivity timer
@@ -168,6 +194,8 @@ typedef struct {
 	struct sockaddr_in raddr[MW_MAX_SOCK];
 	/// Association retries
 	uint8_t n_reassoc;
+	/// HTTP machine data
+	struct http_data http;
 } MwData;
 /** \} */
 
@@ -216,6 +244,62 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
 	xQueueSend(q, &msg, portMAX_DELAY);
 	return ESP_OK;
 }
+
+#define http_err_set(...)	do {	\
+	LsdChDisable(MW_HTTP_CH);	\
+	LOGE(__VA_ARGS__);		\
+	d.http.s = MW_HTTP_ST_ERROR;	\
+} while(0)
+
+static void http_data_recv(void)
+{
+	int readed;
+
+	if (d.http.s != MW_HTTP_ST_FINISH_CONTENT_WAIT) {
+		http_err_set("ignoring unexpected HTTP data on state %d",
+				d.http.s);
+		return;
+	}
+
+	while (d.http.remaining > 0) {
+		readed = esp_http_client_read(d.http.h, (char*)buf,
+				MW_MSG_MAX_BUFLEN);
+		if (-1 == readed) {
+			http_err_set("HTTP read error, %d remaining",
+					d.http.remaining);
+			return;
+		}
+		LsdSend(buf, readed, MW_HTTP_CH);
+		d.http.remaining -= readed;
+	}
+
+	if (d.http.remaining < 0) {
+		LOGW("HTTP ignoring extra %d bytes", -d.http.remaining);
+	}
+	LOGD("HTTP request complete");
+	d.http.s = MW_HTTP_ST_IDLE;
+	LsdChDisable(MW_HTTP_CH);
+}
+
+//static esp_err_t http_event_cb(esp_http_client_event_t *evt)
+//{
+//
+//	switch(evt->event_id) {
+//	case HTTP_EVENT_ERROR:
+//		http_err_set("HTTP internal error");
+//		break;
+//
+//	case HTTP_EVENT_ON_DATA:
+//		http_data_recv_evt(evt);
+//		break;
+//
+//	default:
+//		// Nothing to do
+//		break;
+//	}
+//
+//	return ESP_OK;
+//}
 
 /// Prints a list of found scanned stations
 static void ap_print(const wifi_ap_record_t *ap, int n_aps) {
@@ -337,31 +421,6 @@ static int MwChannelCheck(int ch) {
 	return 0;
 }
 
-static int MwDnsLookup(const char* addr, const char *port,
-		struct addrinfo** addr_info) {
-	int err;
-	struct in_addr* raddr;
-	const struct addrinfo hints = {
-		.ai_family = AF_INET,
-		.ai_socktype = SOCK_STREAM,
-	};
-
-	err = getaddrinfo(addr, port, &hints, addr_info);
-
-	if(err || !*addr_info) {
-		LOGE("DNS lookup failure %d", err);
-		if(*addr_info) {
-			freeaddrinfo(*addr_info);
-		}
-		return -1;
-	}
-	// DNS lookup OK
-	raddr = &((struct sockaddr_in *)(*addr_info)->ai_addr)->sin_addr;
-	LOGI("DNS lookup succeeded. IP=%s", inet_ntoa(*raddr));
-
-	return 0;
-}
-
 /// Establish a connection with a remote server
 static int MwFsmTcpCon(MwMsgInAddr* addr) {
 	struct addrinfo *res;
@@ -377,7 +436,7 @@ static int MwFsmTcpCon(MwMsgInAddr* addr) {
 	}
 
 	// DNS lookup
-	err = MwDnsLookup(addr->data, addr->dst_port, &res);
+	err = net_dns_lookup(addr->data, addr->dst_port, &res);
 	if (err) {
 		return err;
 	}
@@ -391,7 +450,7 @@ static int MwFsmTcpCon(MwMsgInAddr* addr) {
 
 	LOGI("... allocated socket");
 
-	if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
+	if(lwip_connect(s, res->ai_addr, res->ai_addrlen) != 0) {
 		lwip_close(s);
 		freeaddrinfo(res);
 		LOGE("... socket connect failed.");
@@ -516,7 +575,7 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 		LOGE("UDP ch %d, port %d to addr %s:%d.", addr->channel,
 				local_port, addr->data, remote_port);
 
-		err = MwDnsLookup(addr->data, addr->dst_port, &raddr);
+		err = net_dns_lookup(addr->data, addr->dst_port, &raddr);
 		if (err) {
 			lwip_close(s);
 			return -1;
@@ -698,7 +757,6 @@ void MwApJoin(uint8_t n) {
 
 void MwSysStatFill(MwCmd *rep) {
 //	Warning: dt_ok not supported yet
-	rep->cmd = MW_CMD_OK;
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.st_flags = d.s.st_flags;
 	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags, sizeof(MwMsgSysStat));
@@ -717,7 +775,7 @@ int MwInit(void) {
 	esp_err_t err;
 	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
-	LOGI("Configured SPI length: %d", spi_flash_get_chip_size());
+	LOGI("Configured SPI length: %zd", spi_flash_get_chip_size());
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
@@ -833,6 +891,12 @@ static void log_ip_cfg(MwMsgIpCfg *ip)
 	LOGI("DNS2: %s\n", ip_str);
 }
 
+static void reply_set_ok_empty(MwCmd *reply)
+{
+	reply->datalen = 0;
+	reply->cmd = MW_CMD_OK;
+}
+
 static void rand_fill(uint8_t *buf, uint16_t len)
 {
 	uint32_t *data = (uint32_t*)buf;
@@ -853,6 +917,205 @@ static void rand_fill(uint8_t *buf, uint16_t len)
 	}
 }
 
+static void http_parse_url_set(const char *url, MwCmd *reply)
+{
+	if (!d.http.h) {
+		d.http.h = http_init(url, NULL, NULL);
+		LOGD("init, HTTP URL: %s", url);
+		return;
+	}
+
+	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
+		http_url_set(d.http.h, url)) {
+		LOGE("HTTP failed to set URL %s", url);
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		LOGD("HTTP URL: %s", url);
+	}
+}
+
+static void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply)
+{
+	if (!d.http.h) {
+		d.http.h = http_init("", NULL, NULL);
+	}
+
+	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
+			http_method_set(d.http.h, method)) {
+		LOGE("HTTP failed to set method %d", method);
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		LOGD("HTTP method: %d", method);
+	}
+}
+
+static void http_parse_header_add(const char *data, MwCmd *reply)
+{
+	const char *item[2] = {0};
+	int n_items;
+
+	if (!d.http.h) {
+		d.http.h = http_init("", NULL, NULL);
+	}
+
+	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s))) {
+		goto err;
+	}
+
+	n_items = itemizer(data, item, 2);
+	LOGD("HTTP header: %s: %s", item[0], item[1]);
+
+	if ((n_items != 2) || http_header_add(d.http.h, item[0], item[1])) {
+		goto err;
+	}
+
+	return;
+err:
+	LOGE("HTTP header add failed");
+	reply->cmd = htons(MW_CMD_ERROR);
+}
+
+static void http_parse_header_del(const char *key, MwCmd *reply)
+{
+	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
+		http_header_del(d.http.h, key)) {
+		LOGE("HTTP failed to del header %s", key);
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		LOGD("HTTP del header: %s", key);
+	}
+}
+
+static void http_parse_open(uint32_t write_len, MwCmd *reply)
+{
+	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
+			http_open(d.http.h, write_len)) {
+		LOGE("HTTP open failed");
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		LsdChEnable(MW_HTTP_CH);
+		LOGD("HTTP open OK, %" PRIu32 " bytes", write_len);
+		if (write_len) {
+			d.http.remaining = write_len;
+			d.http.s = MW_HTTP_ST_OPEN_CONTENT_WAIT;
+		} else {
+			d.http.s = MW_HTTP_ST_FINISH_WAIT;
+		}
+	}
+}
+
+static uint16_t http_parse_finish(MwCmd *reply)
+{
+	int status;
+	int len = 0;
+	uint16_t replen = 0;
+
+	if ((MW_HTTP_ST_FINISH_WAIT != d.http.s) ||
+			((status = http_finish(d.http.h, &len)) < 0)) {
+		LOGE("HTTP finish failed");
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		LOGD("HTTP finish: %d: %" PRId32 " bytes", status, len);
+		reply->dwData[0] = htonl(len);
+		reply->wData[2] = htons(status);
+		reply->datalen = htons(6);
+		replen = 6;
+		if (len) {
+			d.http.remaining = len;
+			d.http.s = MW_HTTP_ST_FINISH_CONTENT_WAIT;
+		} else {
+			d.http.s = MW_HTTP_ST_IDLE;
+			LsdChDisable(MW_HTTP_CH);
+		}
+	}
+
+	return replen;
+}
+
+static void http_parse_cleanup(MwCmd *reply)
+{
+	d.http.s = MW_HTTP_ST_IDLE;
+
+	if (!d.http.h) {
+		return;
+	}
+
+	LsdChDisable(MW_HTTP_CH);
+	if (http_cleanup(d.http.h)) {
+		LOGE("HTTP cleanup failed");
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		LOGD("HTTP cleanup OK");
+	}
+	d.http.h = NULL;
+}
+
+static void http_cert_flash_write(const char *data, uint16_t len)
+{
+	static uint16_t written;
+	uint16_t to_write;
+
+	// Special condition: if no data payload, reset written counter
+	if (!data && !len) {
+		written = 0;
+		return;
+	}
+
+	// Note we are using d.http.remaining as total (it is not decremented
+	// each time we write data)
+	to_write = MIN(d.http.remaining - written, len);
+	if (to_write) {
+		spi_flash_write(MW_CERT_FLASH_ADDR + written, data, to_write);
+		written += to_write;
+	}
+
+	if (written >= d.http.remaining) {
+		d.http.s = MW_HTTP_ST_IDLE;
+		LOGI("certificate stored");
+		if (to_write < len) {
+			LOGW("ignoring %d certificate bytes", len - to_write);
+		}
+	}
+}
+
+static void http_parse_cert_set(uint16_t cert_len, MwCmd *reply)
+{
+	int cert_sect = MW_CERT_FLASH_ADDR>>12;
+	int err = FALSE;
+
+	if (d.http.s != MW_HTTP_ST_IDLE && d.http.s != MW_HTTP_ST_ERROR) {
+		LOGE("not allowed in HTTP state %d", d.http.s);
+		goto err_out;
+	}
+	if (cert_len > MW_CERT_MAXLEN) {
+		LOGE("cert is %d bytes, maximum allowed is "
+				STR(MW_HTTP_ST_CERT_SET) " bytes",
+				cert_len);
+		goto err_out;
+	}
+	// Erase the required sectors (round up the division between sect len)
+	for (int i = 0; !err && i < (1 + ((MW_CERT_MAXLEN - 1) /
+					MW_FLASH_SECT_LEN)); i++) {
+		err = spi_flash_erase_sector(cert_sect + i) != ESP_OK;
+	}
+	if (err) {
+		LOGE("failed to erase certificate store");
+		goto err_out;
+	}
+
+	LOGI("waiting certificate data (%d bytes)", cert_len);
+	// Reset written data counter
+	http_cert_flash_write(NULL, 0);
+	d.http.s = MW_HTTP_ST_CERT_SET;
+	d.http.remaining = cert_len;
+
+	// Everything OK
+	return;
+
+err_out:
+	reply->cmd = htons(MW_CMD_ERROR);
+}
+
 /// Process command requests (coming from the serial line)
 int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
@@ -869,6 +1132,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 	// parse command
 	LOGI("CmdRequest: %d", ByteSwapWord(c->cmd));
+	reply_set_ok_empty(&reply);
 	switch (ByteSwapWord(c->cmd)) {
 		case MW_CMD_VERSION:
 			// Cancel sleep timer
@@ -887,7 +1151,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_ECHO:		// Echo request
-			reply.cmd = MW_CMD_OK;
 			reply.datalen = c->datalen;
 			LOGI("SENDING ECHO!");
 			// Send the command response
@@ -903,18 +1166,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	    		LOGI("SCAN!");
 			int scan_len = wifi_scan(reply.data);
 			if (scan_len <= 0) {
-				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
 				reply.datalen = scan_len;
 				reply.datalen = ByteSwapWord(reply.datalen);
-				reply.cmd = MW_CMD_OK;
 			}
 			LsdSend((uint8_t*)&reply, scan_len + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_AP_CFG:
-			reply.datalen = 0;
 			tmp = c->apCfg.cfgNum;
 			if (tmp >= MW_NUM_AP_CFGS) {
 				LOGE("Tried to set AP for cfg %d!", tmp);
@@ -929,8 +1189,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				cfg.defaultAp = tmp;
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				} else {
-					reply.cmd = MW_CMD_OK;
 				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -941,11 +1199,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			if (tmp >= MW_NUM_AP_CFGS) {
 				LOGE("Requested AP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				reply.datalen = 0;
 				replen = 0;
 			} else {
 				LOGI("Getting AP configuration %d...", tmp);
-				reply.cmd = MW_CMD_OK;
 				replen = sizeof(MwMsgApCfg);
 				reply.datalen = ByteSwapWord(sizeof(MwMsgApCfg));
 				reply.apCfg.cfgNum = c->apCfg.cfgNum;
@@ -958,8 +1214,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_IP_CURRENT:
-			reply.datalen = replen = 0;
-			reply.cmd = MW_CMD_OK;
+			replen = 0;
 			LOGI("Getting current IP configuration...");
 			replen = sizeof(MwMsgIpCfg);
 			reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
@@ -973,7 +1228,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_IP_CFG:
 			tmp = (uint8_t)c->ipCfg.cfgNum;
-			reply.datalen = 0;
 			if (tmp >= MW_NUM_AP_CFGS) {
 				LOGE("Tried to set IP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
@@ -985,8 +1239,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				log_ip_cfg(&c->ipCfg);
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				} else {
-					reply.cmd = MW_CMD_OK;
 				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -994,13 +1246,12 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_IP_CFG_GET:
 			tmp = c->ipCfg.cfgNum;
-			reply.datalen = replen = 0;
+			replen = 0;
 			if (tmp >= MW_NUM_AP_CFGS) {
 				LOGE("Requested IP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
 				LOGI("Getting IP configuration %d...", tmp);
-				reply.cmd = MW_CMD_OK;
 				replen = sizeof(MwMsgIpCfg);
 				reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
 				reply.ipCfg.cfgNum = c->ipCfg.cfgNum;
@@ -1013,7 +1264,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_DEF_AP_CFG:
-			reply.datalen = 0;
 			tmp = c->data[0];
 			if (tmp < MW_NUM_AP_CFGS) {
 				cfg.defaultAp = tmp;
@@ -1022,7 +1272,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				} else {
 					LOGI("Set default AP: %d", cfg.defaultAp);
-					reply.cmd = MW_CMD_OK;
 				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1030,7 +1279,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_DEF_AP_CFG_GET:
 			reply.datalen = ByteSwapWord(1);
-			reply.cmd = MW_CMD_OK;
 			reply.data[0] = cfg.defaultAp;
 			LOGI("Sending default AP: %d", cfg.defaultAp);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 1, 0);
@@ -1038,14 +1286,12 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_AP_JOIN:
 			// Start connecting to AP and jump to AP_JOIN state
-			reply.datalen = 0;
 			if ((c->data[0] >= MW_NUM_AP_CFGS) ||
 					!(cfg.ap[c->data[0]].ssid[0])) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Invalid AP_JOIN on config %d", c->data[0]);
 			} else {
 				MwApJoin(c->data[0]);
-				reply.cmd = MW_CMD_OK;
 				// TODO: Save configuration to update default AP?
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1061,28 +1307,25 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			d.s.sys_stat = MW_ST_IDLE;
 			d.s.online = FALSE;
 			LOGI("IDLE!");
-			reply.cmd = MW_OK;
-			reply.datalen = 0;
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_TCP_CON:
 			LOGI("TRYING TO CONNECT TCP SOCKET...");
-			reply.datalen = 0;
-			reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
-					MW_CMD_ERROR):MW_CMD_OK;
+			if (MwFsmTcpCon(&c->inAddr) < 0) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_TCP_BIND:
-			reply.datalen = 0;
-			reply.cmd = MwFsmTcpBind(&c->bind)?ByteSwapWord(MW_CMD_ERROR):
-				MW_CMD_OK;
+			if (MwFsmTcpBind(&c->bind)) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_CLOSE:
-			reply.datalen = 0;
 			// If channel number OK, disconnect the socket on requested channel
 			if ((c->data[0] > 0) && (c->data[0] <= LSD_MAX_CH) &&
 					d.ss[c->data[0] - 1]) {
@@ -1090,21 +1333,19 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 						d.sock[c->data[0] - 1], c->data[0]);
 				MwSockClose(c->data[0]);
 				LsdChDisable(c->data[0]);
-				reply.cmd = MW_CMD_OK;
 			} else {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Requested disconnect of not opened channel %d.",
 						c->data[0]);
 			}
-			reply.cmd = ByteSwapWord(reply.cmd);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_UDP_SET:
 			LOGI("Configuring UDP socket...");
-			reply.datalen = 0;
-			reply.cmd = (MwUdpSet(&c->inAddr) < 0)?ByteSwapWord(
-					MW_CMD_ERROR):MW_CMD_OK;
+			if (MwUdpSet(&c->inAddr) < 0) {
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -1116,7 +1357,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.data[0] = (uint8_t)d.ss[c->data[0] - 1];
 				MwFsmClearChEvent(c->data[0]);
 			} else {
-				reply.datalen = replen = 0;
+				replen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Requested unavailable channel!");
 			}
@@ -1128,7 +1369,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SNTP_CFG:
-			reply.datalen = 0;
 			cfg.ntpPoolLen = len - 4;
 			if ((cfg.ntpPoolLen > MW_NTP_POOL_MAXLEN) ||
 					(c->sntpCfg.tz < -11) || (c->sntpCfg.tz > 13)) {
@@ -1140,8 +1380,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				memcpy(cfg.ntpPool, c->sntpCfg.servers, cfg.ntpPoolLen);
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				} else {
-					reply.cmd = MW_CMD_OK;
 				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1150,13 +1388,11 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_SNTP_CFG_GET:
 			replen = MwSntpCfgGet(&reply.sntpCfg);
 			reply.datalen = ByteSwapWord(replen);
-			reply.cmd = MW_CMD_OK;
 			LOGI("sending configuration (%d bytes)", replen);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_DATETIME:
-			reply.cmd = MW_CMD_OK;
 			reply.datetime.dtBin[0] = 0;
 			reply.datetime.dtBin[1] = ByteSwapDWord(ts);
 			ts = time(NULL);
@@ -1172,8 +1408,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_WRITE:
-			reply.datalen = 0;
-			reply.cmd = MW_CMD_OK;
 			// Compute effective flash address
 			c->flData.addr = ByteSwapDWord(c->flData.addr) +
 				MW_FLASH_USER_BASE_ADDR;
@@ -1202,26 +1436,22 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// protected area
 			if ((c->flRange.len > MW_MSG_MAX_BUFLEN) || ((c->flRange.addr - 1 +
 					c->flRange.len) < MW_FLASH_USER_BASE_ADDR)) {
-				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Invalid address/length combination.");
 			// Perform read and check result
 			} else if (spi_flash_read(c->flRange.addr,
 						(uint32_t*)reply.data, c->flRange.len) !=
 					ESP_OK) {
-				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Flash read failed!");
 			} else {
 				reply.datalen = ByteSwapWord(c->flRange.len);
-				reply.cmd = MW_CMD_OK;
 				LOGI("Flash read OK!");
 			}
 			LsdSend((uint8_t*)&reply, c->flRange.len + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FLASH_ERASE:
-			reply.datalen = 0;
 			// Check for sector overflow
 			c->flSect = ByteSwapWord(c->flSect) + MW_FLASH_USER_BASE_SECT;
 			if (c->flSect < MW_FLASH_USER_BASE_SECT) {
@@ -1232,7 +1462,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Sector erase failed!");
 			} else {
-				reply.cmd = MW_CMD_OK;
 				LOGE("Sector erase OK!");
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1242,9 +1471,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// FIXME Is there a way to add support?
 			LOGW("FLASH_ID unsupported on ESP8266_RTOS_SDK");
 			reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			reply.datalen = 0;
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
-//			reply.cmd = MW_CMD_OK;
 //			reply.datalen = ByteSwapWord(sizeof(uint32_t));
 //			reply.flId = sdk_spi_flash_get_id();
 //			LsdSend((uint8_t*)&reply, sizeof(uint32_t) + MW_CMD_HEADLEN, 0);
@@ -1259,7 +1486,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_DEF_CFG_SET:
-			reply.datalen = 0;
 			// Check lengt and magic value
 			if ((len != 4) || (c->dwData[0] !=
 						ByteSwapDWord(MW_FACT_RESET_MAGIC))) {
@@ -1271,7 +1497,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
 				LOGI("Configuration set to default.");
-				reply.cmd = MW_CMD_OK;
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1280,10 +1505,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			replen = ByteSwapWord(c->rndLen);
 			if (replen > MW_CMD_MAX_BUFLEN) {
 				replen = 0;
-				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
-				reply.cmd = MW_CMD_OK;
 				reply.datalen = c->rndLen;
 				rand_fill(reply.data, replen);
 			}
@@ -1292,7 +1515,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_BSSID_GET:
 			reply.datalen = ByteSwapWord(6);
-			reply.cmd = MW_CMD_OK;
 			esp_wifi_get_mac(c->data[0], reply.data);
 			LOGI("Got BSSID(%d) %02X:%02X:%02X:%02X:%02X:%02X",
 					c->data[0], reply.data[0], reply.data[1],
@@ -1302,7 +1524,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_GAMERTAG_SET:
-			reply.datalen = 0;
 			if (c->gamertag_set.slot >= MW_NUM_GAMERTAGS ||
 					len != sizeof(struct mw_gamertag_set_msg)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
@@ -1312,7 +1533,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 						&c->gamertag_set.gamertag,
 						sizeof(struct mw_gamertag));
 				MwNvCfgSave();
-				reply.cmd = MW_CMD_OK;
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1325,7 +1545,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				replen = sizeof(struct mw_gamertag);
 				memcpy(&reply.gamertag_get, &cfg.gamertag[c->data[0]],
 						replen);
-				reply.cmd = MW_CMD_OK;
 			}
 			reply.datalen = ByteSwapWord(replen);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
@@ -1333,18 +1552,13 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_LOG:
 			puts((char*)c->data);
-			reply.cmd = MW_CMD_OK;
-			reply.datalen = 0;
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FACTORY_RESET:
-			reply.datalen = 0;
 			MwSetDefaultCfg();
 			if (MwNvCfgSave() < 0) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			} else {
-				reply.cmd = MW_CMD_OK;
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1352,6 +1566,52 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_SLEEP:
 			// No reply, wakeup continues from user_init()
 			deep_sleep();
+			LOGI("Entering deep sleep");
+			esp_deep_sleep(0);
+			// As it takes a little for the module to enter deep
+			// sleep, stay here for a while
+			vTaskDelayMs(60000);
+
+		case MW_CMD_HTTP_URL_SET:
+			http_parse_url_set((char*)c->data, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_HTTP_METHOD_SET:
+			http_parse_method_set(c->data[0], &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_HTTP_HDR_ADD:
+			http_parse_header_add((char*)c->data, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_HTTP_HDR_DEL:
+			http_parse_header_del((char*)c->data, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_HTTP_OPEN:
+			http_parse_open(ntohl(c->dwData[0]), &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_HTTP_FINISH:
+			replen = http_parse_finish(&reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			/// TODO: Thread this
+			http_data_recv();
+			break;
+
+		case MW_CMD_HTTP_CLEANUP:
+			http_parse_cleanup(&reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_HTTP_CERT_SET:
+			http_parse_cert_set(ntohs(c->wData[0]), &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		default:
@@ -1401,6 +1661,37 @@ static int MwSend(int ch, const void *data, int len) {
 	}
 }
 
+static void MwHttpWrite(const char *data, uint16_t len)
+{
+	uint16_t to_write;
+
+	// Writes should only be performed by client during the
+	// OPEN_CONTENT_WAIT or CERT_SET states
+	switch (d.http.s) {
+	case MW_HTTP_ST_OPEN_CONTENT_WAIT:
+		to_write = MIN(d.http.remaining, len);
+		esp_http_client_write(d.http.h, data, to_write);
+		d.http.remaining -= to_write;
+		if (!d.http.remaining) {
+			if (len != to_write) {
+				LOGW("ignoring %" PRIu16 " extra bytes",
+						len - to_write);
+			}
+			d.http.s = MW_HTTP_ST_FINISH_WAIT;
+		}
+		break;
+
+	case MW_HTTP_ST_CERT_SET:
+		// Save cert to allocated slot in flash
+		http_cert_flash_write(data, len);
+		break;
+
+	default:
+		LOGE("unexpected HTTP write attempt at state %d", d.http.s);
+		break;
+	}
+}
+
 // Process messages during ready stage
 void MwFsmReady(MwFsmMsg *msg) {
 	// Pointer to the message buffer (from RX line).
@@ -1430,6 +1721,9 @@ void MwFsmReady(MwFsmMsg *msg) {
 					rep->cmd = ByteSwapWord(MW_CMD_ERROR);
 					LsdSend((uint8_t*)rep, MW_CMD_HEADLEN, 0);
 				}
+			} else if (MW_HTTP_CH == b->ch) {
+				// Process channel using HTTP state machine
+				MwHttpWrite((char*)b->data, b->len);
 			} else {
 				// Forward message if channel is enabled.
 				if (b->ch < LSD_MAX_CH && d.ss[b->ch - 1]) {
