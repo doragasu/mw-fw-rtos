@@ -29,8 +29,12 @@
 // Time keeping
 #include <time.h>
 
+// WiFi
+#include <esp_system.h>
+#include <esp_wifi.h>
+
 // Flash manipulation
-//#include <spiflash.h>
+#include <spi_flash.h>
 
 #include "megawifi.h"
 #include "lsd.h"
@@ -102,7 +106,7 @@ typedef struct {
 	/// Access point configuration (SSID, password).
 	ApCfg ap[MW_NUM_AP_CFGS];
 	/// IPv4 (IP addr, mask, gateway). If IP=0.0.0.0, use DHCP.
-	ip_addr_t ip[MW_NUM_AP_CFGS];
+	tcpip_adapter_ip_info_t ip[MW_NUM_AP_CFGS];
 	/// DNS configuration (when not using DHCP). 2 servers per AP config.
 	ip_addr_t dns[MW_NUM_AP_CFGS][MW_NUM_DNS_SERVERS];
 	/// NTP update delay (in seconds, greater than 15)
@@ -166,27 +170,21 @@ static uint8_t buf[LSD_MAX_LEN];
 /// Global system status flags
 MwMsgSysStat s;
 
-// Prints data of a WiFi station
-static void PrintStationData(struct sdk_bss_info *bss) {
-	AUTH_MODE atmp;
-	// Character strings related to supported authentication modes
-	const char *authStr[AUTH_MAX + 1] = {
-		"OPEN", "WEP", "WPA_PSK", "WPA2_PSK", "WPA_WPA2_PSK", "???"
-	};
-
-
-	atmp = MIN(bss->authmode, AUTH_MAX);
-	LOGI("%s, %s, ch=%d, str=%d",
-			bss->ssid, authStr[atmp], bss->channel, bss->rssi);
-}
-
 /// Prints a list of found scanned stations
-static void MwBssListPrint(struct sdk_bss_info *bss) {
-	// Traverse the bss list, ignoring first entry
-	while (bss->next.stqe_next != NULL) {
-		bss = bss->next.stqe_next;
-		PrintStationData(bss);
+static void ap_print(const wifi_ap_record_t *ap, int n_aps) {
+	wifi_auth_mode_t auth;
+	const char *auth_str[WIFI_AUTH_MAX + 1] = {
+		"OPEN", "WEP", "WPA_PSK", "WPA2_PSK", "WPA_WPA2_PSK",
+		"WPA_WPA2_ENTERPRISE", "UNKNOWN"
+	};
+	int i;
+
+	for (i = 0; i < n_aps; i++) {
+		auth = MIN(ap[i].authmode, WIFI_AUTH_MAX);
+		LOGI("%s, %s, ch=%d, str=%d", ap[i].ssid, auth_str[auth],
+				ap[i].primary, ap[i].rssi);
 	}
+
 	LOGI("That's all!");
 }
 
@@ -204,68 +202,67 @@ static void MwFsmClearChEvent(int ch) {
 	s.ch_ev &= ~(1<<ch);
 }
 
-#ifdef _DEBUG_MSGS
-#define MwDebBssListPrint(bss)	do{MwBssListPrint(bss);}while(0)
-#else
-#define MwDebBssListPrint(bss)
-#endif
+static int build_scan_reply(const wifi_ap_record_t *ap, uint8_t n_aps,
+		uint8_t *data)
+{
+	int i;
+	uint8_t *pos = data;
+	uint8_t ssid_len;
+	int data_len = 1;
 
-// Scan complete callback: called when a WiFi scan operation has finished.
-static void ScanCompleteCb(struct sdk_bss_info *bss,
-		                   sdk_scan_status_t status) {
-	MwFsmMsg m;
-	m.e = MW_EV_SCAN;
-	uint16_t repLen, tmp;
-	MwCmd *rep;
-	struct sdk_bss_info *start = bss;
-	uint8_t *data;
-	// Number of found access points
-	uint8_t aps;
-
-	if (status == SCAN_OK) {
-		MwDebBssListPrint(bss);
-		repLen = tmp = aps = 0;
-		while (bss->next.stqe_next != NULL) {
-			bss = bss->next.stqe_next;
-			tmp += 4 + strnlen((const char*)bss->ssid, 32);
-			// Check we have not exceeded maximum length, truncate
-			// output if exceeded.
-			if (tmp <= (LSD_MAX_LEN - 5)) {
-				repLen = tmp;
-				aps++;
-			}
-			else break;
+	// Skip number of aps
+	pos = data + 1;
+	for (i = 0; i < n_aps; i++) {
+		ssid_len = strnlen((char*)ap[i].ssid, 32);
+		// Check if next entry fits along with end
+		if ((ssid_len + 5) >= LSD_MAX_LEN) {
+			LOGI("discarding %d entries", n_aps - i);
+			break;
 		}
-		if (!(rep = (MwCmd*) malloc(repLen + 4))) {
-			LOGE("ScanCompleteCb: malloc failed!");
-			return;
-		}
-		// Fill in reply data
-		bss = start;
-		rep->cmd = MW_CMD_OK;
-		rep->datalen = ByteSwapWord(repLen + 1);
-		// First byte is the number of found APs
-		data = rep->data;
-		*data++ = aps;
-		tmp = 0;
-		while ((bss->next.stqe_next != NULL) && (tmp < repLen)) {
-			bss = bss->next.stqe_next;
-			data[0] = bss->authmode;
-			data[1] = bss->channel;
-			data[2] = bss->rssi;
-			data[3] = strnlen((const char*)bss->ssid, 32);
-			memcpy(data + 4, bss->ssid, data[3]);
-			tmp += 4 + data[3];
-			data += 4 + data[3];
-		}
-		m.d = rep;
-	} else {
-		// Scan failed, set null pointer for the FSM to notice.
-		LOGE("Scan failed with error %d!", status);
-		m.d = NULL;
-		
+		pos[0] = ap[i].authmode;
+		pos[1] = ap[i].primary;
+		pos[2] = ap[i].rssi;
+		pos[3] = ssid_len;
+		memcpy(pos + 4, ap[i].ssid, data[3]);
+		pos += 4 + ssid_len;
+		data_len += 4 + ssid_len;
 	}
-	xQueueSend(d.q, &m, portMAX_DELAY);
+	// Write number of APs in report
+	*data = i;
+
+	return data_len;
+}
+
+static int wifi_scan(uint8_t *data)
+{
+	int length = -1;
+	uint16_t n_aps = 0;
+	wifi_ap_record_t *ap = NULL;
+	wifi_scan_config_t scan_cfg = {};
+
+	esp_wifi_start();
+	if (ESP_OK != esp_wifi_scan_start(&scan_cfg, true)) {
+		LOGE("scan failed!");
+		goto out;
+	}
+
+	n_aps = esp_wifi_scan_get_ap_num(&n_aps);
+	ap = calloc(n_aps, sizeof(wifi_ap_record_t));
+ 	if (!ap) {
+		LOGE("out of memory!");
+		goto out;
+	}
+	esp_wifi_scan_get_ap_records(&n_aps, ap);
+	length = build_scan_reply(ap, n_aps, data);
+
+
+out:
+	if (ap) {
+		free(ap);
+	}
+	esp_wifi_stop();
+
+	return length;
 }
 
 static int MwChannelCheck(int ch) {
@@ -554,15 +551,14 @@ int MwNvCfgSave(void) {
 #endif
 	// Erase configuration sector
 //	if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
-	if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
-			SPI_FLASH_RESULT_OK) {
+	if (spi_flash_erase_sector(MW_CFG_FLASH_SECT) != ESP_OK) {
 		LOGE("Flash sector 0x%X erase failed!", MW_CFG_FLASH_SECT);
 		return -1;
 	}
 	// Write configuration to flash
 //	if (!spiflash_write(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg))) {
-	if (sdk_spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
-			sizeof(MwNvCfg)) != SPI_FLASH_RESULT_OK) {
+	if (spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
+			sizeof(MwNvCfg)) != ESP_OK) {
 		LOGE("Flash write addr 0x%X failed!", MW_CFG_FLASH_ADDR);
 		return -1;
 	}
@@ -581,7 +577,7 @@ int MwCfgLoad(void) {
 
 	// Load configuration from flash
 //	spiflash_read(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg));
-	sdk_spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
+	spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
 	// Check MD5
 	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), md5);
@@ -596,7 +592,7 @@ int MwCfgLoad(void) {
 	md5_to_str(cfg.md5, md5_str);
 	LOGI("Loaded MD5:   %s", md5_str);
 	md5_to_str(md5, md5_str);
-	LOGI("Computed MD5: %s");
+	LOGI("Computed MD5: %s", md5_str);
 #endif
 
 	// MD5 did not pass, load default configuration
@@ -608,8 +604,9 @@ int MwCfgLoad(void) {
 static void SetIpCfg(int slot) {
 	if ((cfg.ip[slot].ip.addr) && (cfg.ip[slot].netmask.addr)
 				&& (cfg.ip[slot].gw.addr)) {
-		sdk_wifi_station_dhcpc_stop();
-		if (sdk_wifi_set_ip_info(STATION_IF, cfg.ip + slot)) {
+		tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
+		if (tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA,
+					cfg.ip + slot)) {
 			LOGI("Static IP configuration set.");
 			// Set DNS servers if available
 			if (cfg.dns[slot][0].addr) {
@@ -620,24 +617,22 @@ static void SetIpCfg(int slot) {
 			}
 		} else {
 			LOGE("Failed setting static IP configuration.");
-			sdk_wifi_station_dhcpc_start();
+			tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 		}
 	} else {
 		LOGI("Setting DHCP IP configuration.");
-		sdk_wifi_station_dhcpc_start();
+		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 	}
 }
 
 void MwApJoin(uint8_t n) {
-	struct sdk_station_config stcfg;
+	wifi_config_t if_cfg = {};
 
 	SetIpCfg(n);
-	memset(&stcfg, 0, sizeof(struct sdk_station_config));
-	strncpy((char*)stcfg.ssid, cfg.ap[n].ssid, MW_SSID_MAXLEN);
-	strncpy((char*)stcfg.password, cfg.ap[n].pass, MW_PASS_MAXLEN);
-	sdk_wifi_set_opmode(STATION_MODE);
-	sdk_wifi_station_set_config(&stcfg);
-	sdk_wifi_station_connect();
+	strncpy((char*)if_cfg.sta.ssid, cfg.ap[n].ssid, MW_SSID_MAXLEN);
+	strncpy((char*)if_cfg.sta.password, cfg.ap[n].pass, MW_PASS_MAXLEN);
+	esp_wifi_set_config(ESP_IF_WIFI_STA, &if_cfg);
+	esp_wifi_start();
 	LOGI("AP ASSOC %d", n);
 	d.s.sys_stat = MW_ST_AP_JOIN;
 }
@@ -655,17 +650,22 @@ void MwSysStatFill(MwCmd *rep) {
 void MwInit(void) {
 	MwFsmMsg m;
 	struct timezone tz;
-	char *sntpSrv[SNTP_NUM_SERVERS_SUPPORTED];
+	char *sntpSrv[SNTP_MAX_SERVERS];
 	size_t sntpLen = 0;
 	int i;
 	uint8_t tmp;
+	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
-	// If enabled, disable auto connect
-	if (sdk_wifi_station_get_auto_connect())
-		sdk_wifi_station_set_auto_connect(0);
+	tcpip_adapter_init();
+//	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL) );
+	// Configure and start WiFi interface
+	ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
+	esp_wifi_set_storage(WIFI_STORAGE_RAM);
+//	esp_wifi_set_auto_connect(false); // deprecated
+	esp_wifi_set_mode(WIFI_MODE_STA);
+//	esp_wifi_start();
 
-	// Get flash chip information
-	LOGI("SPI Flash id: 0x%08X", sdk_spi_flash_get_id());
+	LOGI("Configured SPI length: %d", spi_flash_get_chip_size());
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
@@ -704,26 +704,25 @@ void MwInit(void) {
 	}
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
-	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_NUM_SERVERS_SUPPORTED) &&
+	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_MAX_SERVERS) &&
 			((sntpLen = strlen(sntpSrv[i])) > 0); i++) {
 			sntpSrv[i + 1] = sntpSrv[i] + sntpLen + 1;
 			LOGE("SNTP server: %s", sntpSrv[i]);
 	}
-	if (i) {
-		LOGI("%d SNTP servers found.", i);
-		tz.tz_minuteswest = cfg.timezone * 60;
-		tz.tz_dsttime = cfg.dst;
-		tz.tz_minuteswest = 0;
-		sntp_initialize(&tz);
-		LOGI("Setting update delay to %d seconds.", cfg.ntpUpDelay);
-		/// \todo FIXME Setting sntp servers breaks tasking when using
-		/// latest esp-open-rtos
-		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
+	// FIXME: SNTP not supported on ESP8266_RTOS_SDK
+//	if (i) {
+//		LOGI("%d SNTP servers found.", i);
+//		tz.tz_minuteswest = cfg.timezone * 60;
+//		tz.tz_dsttime = cfg.dst;
+//		tz.tz_minuteswest = 0;
+//		sntp_initialize(&tz);
+//		LOGI("Setting update delay to %d seconds.", cfg.ntpUpDelay);
+//		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
 //		if (sntp_set_servers(sntpSrv, i)) {
 //			LOGI("Error setting SNTP servers!");
 //			return;
 //		}
-	} else LOGE("No NTP servers found!");
+//	} else LOGE("No NTP servers found!");
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(d.q);
 	LsdChEnable(MW_CTRL_CH);
@@ -756,6 +755,26 @@ static void log_ip_cfg(MwMsgIpCfg *ip)
 	LOGI("DNS1: %s", ip_str);
 	ipv4_to_str(ip->dns2.addr, ip_str);
 	LOGI("DNS2: %s\n", ip_str);
+}
+
+static void rand_fill(uint8_t *buf, uint16_t len)
+{
+	uint32_t *data = (uint32_t*)buf;
+	uint8_t last[4];
+	uint16_t dwords = len>>2;
+	uint16_t i;
+
+	// Generate random dwords
+	for (i = 0; i < dwords; i++) {
+		data[i] = esp_random();
+	}
+
+	// Generate remaining random bytes
+	*((uint32_t*)last) = esp_random();
+	buf = (uint8_t*)(data + i);
+	for (i = 0; i < (len & 3); i++) {
+		buf[i] = last[i];
+	}
 }
 
 /// Process command requests (coming from the serial line)
@@ -799,13 +818,17 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_AP_SCAN:
-			// Only works when on IDLE state.
-			if (MW_ST_IDLE == d.s.sys_stat) {
-				d.s.sys_stat = MW_ST_SCAN;
 	    		LOGI("SCAN!");
-	    		sdk_wifi_station_scan(NULL, (sdk_scan_done_cb_t)
-						ScanCompleteCb);
+			int scan_len = wifi_scan(reply.data);
+			if (scan_len <= 0) {
+				reply.datalen = 0;
+				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			} else {
+				reply.datalen = scan_len;
+				reply.datalen = ByteSwapWord(reply.datalen);
+				reply.cmd = MW_CMD_OK;
 			}
+			LsdSend((uint8_t*)&reply, scan_len + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_AP_CFG:
@@ -859,7 +882,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			replen = sizeof(MwMsgIpCfg);
 			reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
 			reply.ipCfg.cfgNum = 0;
-			sdk_wifi_get_ip_info(STATION_IF, &reply.ipCfg.cfg);
+			tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &reply.ipCfg.cfg);
 			reply.ipCfg.dns1 = *dns_getserver(0);
 			reply.ipCfg.dns2 = *dns_getserver(1);
 			log_ip_cfg(&reply.ipCfg);
@@ -951,7 +974,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// Close all opened sockets
 			MwFsmCloseAll();
 			// Disconnect and switch to IDLE state
-			sdk_wifi_station_disconnect();
+			esp_wifi_disconnect();
 			d.s.sys_stat = MW_ST_IDLE;
 			LOGI("IDLE!");
 			reply.cmd = MW_OK;
@@ -1076,9 +1099,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 					MW_FLASH_USER_BASE_ADDR) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Address/length combination overflows!");
-			} else if (sdk_spi_flash_write(c->flData.addr,
+			} else if (spi_flash_write(c->flData.addr,
 						(uint32_t*)c->flData.data, len - sizeof(uint32_t)) !=
-					SPI_FLASH_RESULT_OK) {
+					ESP_OK) {
 //			} else if (!spiflash_write(c->flData.addr, (uint8_t*)c->flData.data,
 //					len - sizeof(uint32_t))) {
 				LOGE("Write to flash failed!");
@@ -1101,9 +1124,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Invalid address/length combination.");
 			// Perform read and check result
-			} else if (sdk_spi_flash_read(c->flRange.addr,
+			} else if (spi_flash_read(c->flRange.addr,
 						(uint32_t*)reply.data, c->flRange.len) !=
-					SPI_FLASH_RESULT_OK) {
+					ESP_OK) {
 //			} else if (!spiflash_read(c->flRange.addr,
 //						(uint8_t*)reply.data, c->flRange.len)) {
 				reply.datalen = 0;
@@ -1124,8 +1147,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			if (c->flSect < MW_FLASH_USER_BASE_SECT) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGW("Wrong sector number.");
-			} else if (sdk_spi_flash_erase_sector(c->flSect) !=
-					SPI_FLASH_RESULT_OK) {
+			} else if (spi_flash_erase_sector(c->flSect) !=
+					ESP_OK) {
 //			} else if (!spiflash_erase_sector((c->flSect)<<12)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Sector erase failed!");
@@ -1137,10 +1160,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_ID:
-			reply.cmd = MW_CMD_OK;
-			reply.datalen = ByteSwapWord(sizeof(uint32_t));
-			reply.flId = sdk_spi_flash_get_id();
-			LsdSend((uint8_t*)&reply, sizeof(uint32_t) + MW_CMD_HEADLEN, 0);
+			// FIXME Is there a way to add support?
+			LOGW("FLASH_ID unsupported on ESP8266_RTOS_SDK");
+			reply.cmd = ByteSwapWord(MW_CMD_ERROR);
+			reply.datalen = 0;
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+//			reply.cmd = MW_CMD_OK;
+//			reply.datalen = ByteSwapWord(sizeof(uint32_t));
+//			reply.flId = sdk_spi_flash_get_id();
+//			LsdSend((uint8_t*)&reply, sizeof(uint32_t) + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_SYS_STAT:
@@ -1158,9 +1186,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 						ByteSwapDWord(MW_FACT_RESET_MAGIC))) {
 				LOGE("Wrong DEF_CFG_SET command invocation!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			} else if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
-					SPI_FLASH_RESULT_OK) {
-//			} else if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
+			} else if (spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
+					ESP_OK) {
 				LOGE("Config flash sector erase failed!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
@@ -1179,7 +1206,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else {
 				reply.cmd = MW_CMD_OK;
 				reply.datalen = c->rndLen;
-				hwrand_fill(reply.data, replen);
+				rand_fill(reply.data, replen);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
@@ -1187,7 +1214,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_BSSID_GET:
 			reply.datalen = ByteSwapWord(6);
 			reply.cmd = MW_CMD_OK;
-			sdk_wifi_get_macaddr(c->data[0], reply.data);
+			esp_wifi_get_mac(c->data[0], reply.data);
 			LOGI("Got BSSID(%d) %02X:%02X:%02X:%02X:%02X:%02X",
 					c->data[0], reply.data[0], reply.data[1],
 					reply.data[2], reply.data[3],
@@ -1470,20 +1497,6 @@ static void MwFsm(MwFsmMsg *msg) {
 			}
 			break;
 
-		case MW_ST_SCAN:
-			// Ignore events until we receive the scan result
-			if (MW_EV_SCAN == msg->e) {
-				// We receive the station data reply ready to be sent
-				LOGI("Sending station data");
-				rep = (MwCmd*)msg->d;
-				LsdSend((uint8_t*)rep, ByteSwapWord(rep->datalen) +
-						MW_CMD_HEADLEN, 0);
-				free(rep);
-				d.s.sys_stat = MW_ST_IDLE;
-				LOGI("IDLE!");
-			}
-			break;
-
 		case MW_ST_READY:
 			// Module ready. Here we will have most of the activity
 			MwFsmReady(msg);
@@ -1589,7 +1602,6 @@ static int MwRecv(int ch, char *buf, int len) {
 void MwFsmSockTsk(void *pvParameters) {
 	fd_set readset;
 	int i, ch, retval;
-	int led = 0;
 	int max;
 	ssize_t recvd;
 	struct timeval tv = {
@@ -1603,7 +1615,7 @@ void MwFsmSockTsk(void *pvParameters) {
 	d.fdMax = -1;
 
 	while (1) {
-		gpio_write(LED_GPIO_PIN, (led++)&1);
+		led_toggle();
 		// Update list of active sockets
 		readset = d.fds;
 

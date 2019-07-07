@@ -36,6 +36,9 @@
 /// the flash, 0x3FD for a 4 MiB flash chip).
 #define MW_CFG_FLASH_SEQ	((FLASH_LENGTH>>12)-3)
 
+/// Maximum number of supported SNTP servers
+#define SNTP_MAX_SERVERS	3
+
 /// Default NTP server 0
 #define MW_SNTP_SERV_0		"0.pool.ntp.org"
 /// Default NTP server 1

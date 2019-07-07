@@ -15,5 +15,8 @@ void led_init(void);
 /// Powers the LED off
 #define led_off() do{gpio_set_level(LED_GPIO_PIN, 1);}while(0)
 
+#define led_toggle() do{gpio_set_level(LED_GPIO_PIN,		\
+		!gpio_get_level(LED_GPIO_PIN));}while(0)
+
 #endif /*__LED_H__*/
 

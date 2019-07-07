@@ -70,6 +70,7 @@ flags = [
     '-D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1',
     '-DMBEDTLS_CONFIG_FILE=mbedtls/esp_config.h',
     '-DWOLFSSL_USER_SETTINGS',
+    '-D_DEBUG_MSGS',
     '-I',
     prj_path + '/main/include',
     '-I',

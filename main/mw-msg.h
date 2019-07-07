@@ -10,8 +10,7 @@
 #ifndef _MW_MSG_H_
 #define _MW_MSG_H_
 
-#include <stdint.h>
-#include <lwip/inet.h>
+#include <esp_wifi.h>
 
 /// Maximum SSID length (including '\0').
 #define MW_SSID_MAXLEN		32
@@ -64,7 +63,6 @@ typedef enum {
 	MW_ST_INIT = 0,		///< Initialization state.
 	MW_ST_IDLE,			///< Idle state, until connected to an AP.
 	MW_ST_AP_JOIN,		///< Trying to join an access point.
-	MW_ST_SCAN,			///< Scanning access points.
 	MW_ST_READY,		///< Connected to The Internet.
 	MW_ST_TRANSPARENT,	///< Transparent communication state.
 	MW_ST_MAX			///< Limit number for state machine.
@@ -96,7 +94,7 @@ typedef struct {
 typedef struct {
 	uint8_t cfgNum;
 	uint8_t reserved[3];
-	in_addr_t cfg;
+	tcpip_adapter_ip_info_t cfg;
 	ip_addr_t dns1;
 	ip_addr_t dns2;
 } MwMsgIpCfg;
