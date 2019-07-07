@@ -12,8 +12,7 @@
  ****************************************************************************/
 #include <string.h>
 #include <unistd.h>
-#include <espressif/esp_common.h>
-#include <esp/uart.h>
+//#include <esp/uart.h>
 
 #include "lsd.h"
 #include <semphr.h>
@@ -144,15 +143,15 @@ int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
 	uint8_t scratch[3];
 
 	if (len > MW_MSG_MAX_BUFLEN || ch >= LSD_MAX_CH) {
-		dprintf("Invalid length (%d) or channel (%d).\n", len, ch);
+		LOGE("Invalid length (%d) or channel (%d).", len, ch);
 		return -1;
 	}
 	if (!d.en[ch]) {
-		dprintf("LsdSend: Channel %d not enabled.\n", ch);
+		LOGE("LsdSend: Channel %d not enabled.", ch);
 		return 0;
 	}
 
-//	dprintf("Sending %d bytes\n", len);
+	LOGD("sending %d bytes", len);
 	scratch[0] = LSD_STX_ETX;
 	scratch[1] = (ch<<4) | (len>>8);
 	scratch[2] = len & 0xFF;
@@ -191,10 +190,10 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
 	scratch[1] = (ch<<4) || (total>>8);
 	scratch[2] = total & 0xFF;
 	// Send STX, channel and length
-//	dprintf("Sending header\n");
+	LOGD("sending header");
 	write(LSD_UART, scratch, sizeof(scratch));
 	// Send data payload
-//	dprintf("Sending %d bytes\n", len);
+	LOGD("sending %d bytes", len);
 	if (len) write(LSD_UART, data, len);
 	return len;
 }
@@ -211,7 +210,7 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
  ****************************************************************************/
 int LsdSplitNext(uint8_t *data, uint16_t len) {
 	// send data
-//	dprintf("Sending %d bytes\n", len);
+	LOGD("Sending %d bytes", len);
 	write(LSD_UART, data, len);
 	return len;
 }
@@ -230,11 +229,11 @@ int LsdSplitEnd(uint8_t *data, uint16_t len) {
 	uint8_t scratch = LSD_STX_ETX;
 
 	// Send data
-//	dprintf("Sending %d bytes\n", len);
+	LOGD("Sending %d bytes", len);
 	write(LSD_UART, data, len);
 	
 	// Send ETX
-//	dprintf("Sending ETX\n");
+	LOGD("Sending ETX");
 	write(LSD_UART, &scratch, 1);
 
 	return len;
@@ -297,7 +296,7 @@ void LsdRecvTsk(void *pvParameters) {
 							}
 							else {
 								d.rxs = LSD_ST_STX_WAIT;
-								dprintf("Recv data on not enabled channel!\n");
+								LOGE("Recv data on not enabled channel!");
 							}
 						}
 						break;
@@ -309,7 +308,7 @@ void LsdRecvTsk(void *pvParameters) {
 							pos = 0;
 							d.rxs = LSD_ST_DATA_RECV;
 						} else {
-							dprintf("Recv length exceeds buffer length!\n");
+							LOGE("Recv length exceeds buffer length!");
 							d.rxs = LSD_ST_STX_WAIT;
 						}
 						break;
@@ -329,7 +328,7 @@ void LsdRecvTsk(void *pvParameters) {
 							receiving = FALSE;
 							xQueueSend(q, &m, portMAX_DELAY);
 						} else {
-						dprintf("Expecting ETX but not received!\n");
+						LOGE("Expecting ETX but not received!");
 						}
 						d.rxs = LSD_ST_STX_WAIT;
 						break;

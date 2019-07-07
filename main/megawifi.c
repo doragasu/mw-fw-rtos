@@ -5,12 +5,6 @@
  * \date   2016
  ****************************************************************************/
 
-// Espressif definitions
-#include <espressif/esp_common.h>
-#include <espressif/user_interface.h>
-#include <esp/uart.h>
-#include <esp/hwrand.h>
-
 // Newlib
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,7 +27,6 @@
 #include <mbedtls/md5.h>
 
 // Time keeping
-#include <sntp.h>
 #include <time.h>
 
 // Flash manipulation
@@ -183,7 +176,7 @@ static void PrintStationData(struct sdk_bss_info *bss) {
 
 
 	atmp = MIN(bss->authmode, AUTH_MAX);
-	printf("%s, %s, ch=%d, str=%d\n",
+	LOGI("%s, %s, ch=%d, str=%d",
 			bss->ssid, authStr[atmp], bss->channel, bss->rssi);
 }
 
@@ -194,7 +187,7 @@ static void MwBssListPrint(struct sdk_bss_info *bss) {
 		bss = bss->next.stqe_next;
 		PrintStationData(bss);
 	}
-	dprintf("That's all!\n\n");
+	LOGI("That's all!");
 }
 
 // Raises an event pending flag on requested channel
@@ -244,7 +237,7 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 			else break;
 		}
 		if (!(rep = (MwCmd*) malloc(repLen + 4))) {
-			dprintf("ScanCompleteCb: malloc failed!\n");
+			LOGE("ScanCompleteCb: malloc failed!");
 			return;
 		}
 		// Fill in reply data
@@ -268,7 +261,7 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 		m.d = rep;
 	} else {
 		// Scan failed, set null pointer for the FSM to notice.
-		dprintf("Scan failed with error %d!\n", status);
+		LOGE("Scan failed with error %d!", status);
 		m.d = NULL;
 		
 	}
@@ -278,11 +271,11 @@ static void ScanCompleteCb(struct sdk_bss_info *bss,
 static int MwChannelCheck(int ch) {
 	// Check channel is valid and not in use.
 	if (ch >= LSD_MAX_CH) {
-		dprintf("Requested unavailable channel %d\n", ch);
+		LOGE("Requested unavailable channel %d", ch);
 		return -1;
 	}
 	if (d.ss[ch - 1]) {
-		dprintf("Requested already in-use channel %d\n", ch);
+		LOGW("Requested already in-use channel %d", ch);
 		return -1;
 	}
 
@@ -301,7 +294,7 @@ static int MwDnsLookup(const char* addr, const char *port,
 	err = getaddrinfo(addr, port, &hints, addr_info);
 
 	if(err || !*addr_info) {
-		dprintf("DNS lookup failure %d\n", err);
+		LOGE("DNS lookup failure %d", err);
 		if(*addr_info) {
 			freeaddrinfo(*addr_info);
 		}
@@ -309,7 +302,7 @@ static int MwDnsLookup(const char* addr, const char *port,
 	}
 	// DNS lookup OK
 	raddr = &((struct sockaddr_in *)(*addr_info)->ai_addr)->sin_addr;
-	dprintf("DNS lookup succeeded. IP=%s\n", inet_ntoa(*raddr));
+	LOGI("DNS lookup succeeded. IP=%s", inet_ntoa(*raddr));
 
 	return 0;
 }
@@ -320,7 +313,7 @@ static int MwFsmTcpCon(MwMsgInAddr* addr) {
 	int err;
 	int s;
 
-	dprintf("Con. ch %d to %s:%s\n", addr->channel, addr->data,
+	LOGI("Con. ch %d to %s:%s", addr->channel, addr->data,
 			addr->dst_port);
 
 	err = MwChannelCheck(addr->channel);
@@ -336,21 +329,21 @@ static int MwFsmTcpCon(MwMsgInAddr* addr) {
 
 	s = lwip_socket(res->ai_family, res->ai_socktype, 0);
 	if(s < 0) {
-		dprintf("... Failed to allocate socket.\n");
+		LOGE("... Failed to allocate socket.");
 		freeaddrinfo(res);
 		return -1;
 	}
 
-	dprintf("... allocated socket\n");
+	LOGI("... allocated socket");
 
 	if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
 		lwip_close(s);
 		freeaddrinfo(res);
-		dprintf("... socket connect failed.\n");
+		LOGE("... socket connect failed.");
 		return -1;
 	}
 
-	dprintf("... connected sock %d on ch %d\n", s, addr->channel);
+	LOGI("... connected sock %d on ch %d", s, addr->channel);
 	freeaddrinfo(res);
 	// Record socket number, type and mark channel as in use.
 	d.sock[addr->channel - 1] = s;
@@ -381,14 +374,14 @@ static int MwFsmTcpBind(MwMsgBind *b) {
 
 	// Create socket, set options
 	if ((serv = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-		dprintf("Could not create server socket!\n");
+		LOGE("Could not create server socket!");
 		return -1;
 	}
 
 	if (lwip_setsockopt(serv, SOL_SOCKET, SO_REUSEADDR, &optval,
 				sizeof(int)) < 0) {
 		lwip_close(serv);
-		dprintf("setsockopt failed!\n");
+		LOGE("setsockopt failed!");
 		return -1;
 	}
 
@@ -403,17 +396,17 @@ static int MwFsmTcpBind(MwMsgBind *b) {
 	// Bind to address
 	if (lwip_bind(serv, (struct sockaddr*)&saddr, sizeof(saddr)) < -1) {
 		lwip_close(serv);
-		dprintf("Bind to port %d failed!\n", port);
+		LOGE("Bind to port %d failed!", port);
 		return -1;
 	}
 
 	// Listen for incoming connections
 	if (lwip_listen(serv, MW_MAX_SOCK) < 0) {
 		lwip_close(serv);
-		dprintf("Listen to port %d failed!\n", port);
+		LOGE("Listen to port %d failed!", port);
 		return -1;
 	}
-	printf("Listening to port %d.\n", port);
+	LOGE("Listening to port %d.", port);
 
 	// Fill in channel data
 	d.sock[b->channel - 1] = serv;
@@ -459,13 +452,13 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 	remote_port = atoi(addr->dst_port);
 
 	if ((s = lwip_socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
-		dprintf("Failed to create UDP socket\n");
+		LOGE("Failed to create UDP socket");
 		return -1;
 	}
 
 	if (!remote_port && addr->data[0]) {
 		// Communication with remote peer
-		dprintf("UDP ch %d, port %d to addr %s:%d.\n", addr->channel,
+		LOGE("UDP ch %d, port %d to addr %s:%d.", addr->channel,
 				local_port, addr->data, remote_port);
 
 		err = MwDnsLookup(addr->data, addr->dst_port, &raddr);
@@ -477,7 +470,7 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 		freeaddrinfo(raddr);
 	} else if (local_port) {
 		// Server in reuse mode
-		dprintf("UDP ch %d, src port %d.\n", addr->channel, local_port);
+		LOGI("UDP ch %d, src port %d.", addr->channel, local_port);
 
 		memset(d.raddr[idx].sin_zero, 0, sizeof(d.raddr[idx].sin_zero));
 		d.raddr[idx].sin_len = sizeof(struct sockaddr_in);
@@ -485,18 +478,18 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 		d.raddr[idx].sin_addr.s_addr = lwip_htonl(INADDR_ANY);
 		d.raddr[idx].sin_port = lwip_htons(local_port);
 	} else {
-		dprintf("Invalid UDP socket data\n");
+		LOGE("Invalid UDP socket data");
 		return -1;
 	}
 
 	if (lwip_bind(s, (struct sockaddr*)&d.raddr[idx],
 				sizeof(struct sockaddr_in)) < 0) {
-		dprintf("bind() failed. Is UDP port in use?\n");
+		LOGE("bind() failed. Is UDP port in use?");
 		lwip_close(s);
 		return -1;
 	}
 
-	printf("UDP socket %d bound\n", s);
+	LOGI("UDP socket %d bound", s);
 	// Record socket number and mark channel as in use.
 	d.sock[idx] = s;
 	d.chan[s - LWIP_SOCKET_OFFSET] = addr->channel;
@@ -517,7 +510,7 @@ static void MwFsmCloseAll(void) {
 
 	for (i = 0; i < MW_MAX_SOCK; i++) {
 		if (d.ss[i] > 0) {
-			dprintf("Closing sock %d on ch %d\n", d.sock[i], i + 1);
+			LOGI("Closing sock %d on ch %d", d.sock[i], i + 1);
 			MwSockClose(i + 1);
 			LsdChDisable(i + 1);
 		}
@@ -534,12 +527,6 @@ static int MwCmdInList(uint8_t cmd, const uint32_t list[2]) {
 	} else {
 		return 0;
 	}
-}
-
-static void PrintHex(uint8_t data[], uint16_t len) {
-	uint16_t i;
-
-	for (i = 0; i < len; i++) printf("%02x", data[i]);
 }
 
 /// Set default configuration.
@@ -561,23 +548,25 @@ int MwNvCfgSave(void) {
 	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), cfg.md5);
 #ifdef _DEBUG_MSGS
-	printf("Saved MD5: "); PrintHex(cfg.md5, 16); putchar('\n');
+	char md5_str[33];
+	md5_to_str(cfg.md5, md5_str);
+	LOGI("Saved MD5: %s", md5_str);
 #endif
 	// Erase configuration sector
 //	if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
 	if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
 			SPI_FLASH_RESULT_OK) {
-		dprintf("Flash sector 0x%X erase failed!\n", MW_CFG_FLASH_SECT);
+		LOGE("Flash sector 0x%X erase failed!", MW_CFG_FLASH_SECT);
 		return -1;
 	}
 	// Write configuration to flash
 //	if (!spiflash_write(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg))) {
 	if (sdk_spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
 			sizeof(MwNvCfg)) != SPI_FLASH_RESULT_OK) {
-		dprintf("Flash write addr 0x%X failed!\n", MW_CFG_FLASH_ADDR);
+		LOGE("Flash write addr 0x%X failed!", MW_CFG_FLASH_ADDR);
 		return -1;
 	}
-	dprintf("Configuration saved to flash.\n");
+	LOGI("Configuration saved to flash.");
 	return 0;
 }
 
@@ -599,17 +588,20 @@ int MwCfgLoad(void) {
 	if (!memcmp(cfg.md5, md5, 16)) {
 		// MD5 test passed, return with loaded configuration
 		d.s.cfg_ok = TRUE;
-		dprintf("Configuration loaded from flash.\n");
+		LOGI("Configuration loaded from flash.");
 		return 0;
 	}
 #ifdef _DEBUG_MSGS
-	printf("Loaded MD5:   "); PrintHex(cfg.md5, 16); putchar('\n');
-	printf("Computed MD5: "); PrintHex(md5, 16); putchar('\n');
+	char md5_str[33];
+	md5_to_str(cfg.md5, md5_str);
+	LOGI("Loaded MD5:   %s", md5_str);
+	md5_to_str(md5, md5_str);
+	LOGI("Computed MD5: %s");
 #endif
 
 	// MD5 did not pass, load default configuration
 	MwSetDefaultCfg();
-	dprintf("Loaded default configuration.\n");
+	LOGI("Loaded default configuration.");
 	return 1;
 }
 
@@ -618,7 +610,7 @@ static void SetIpCfg(int slot) {
 				&& (cfg.ip[slot].gw.addr)) {
 		sdk_wifi_station_dhcpc_stop();
 		if (sdk_wifi_set_ip_info(STATION_IF, cfg.ip + slot)) {
-			dprintf("Static IP configuration set.\n");
+			LOGI("Static IP configuration set.");
 			// Set DNS servers if available
 			if (cfg.dns[slot][0].addr) {
 				dns_setserver(0, cfg.dns[slot] + 0);
@@ -627,11 +619,11 @@ static void SetIpCfg(int slot) {
 				}
 			}
 		} else {
-			dprintf("Failed setting static IP configuration.\n");
+			LOGE("Failed setting static IP configuration.");
 			sdk_wifi_station_dhcpc_start();
 		}
 	} else {
-		dprintf("Setting DHCP IP configuration.\n");
+		LOGI("Setting DHCP IP configuration.");
 		sdk_wifi_station_dhcpc_start();
 	}
 }
@@ -646,7 +638,7 @@ void MwApJoin(uint8_t n) {
 	sdk_wifi_set_opmode(STATION_MODE);
 	sdk_wifi_station_set_config(&stcfg);
 	sdk_wifi_station_connect();
-	dprintf("AP ASSOC %d\n", n);
+	LOGI("AP ASSOC %d", n);
 	d.s.sys_stat = MW_ST_AP_JOIN;
 }
 
@@ -673,7 +665,7 @@ void MwInit(void) {
 		sdk_wifi_station_set_auto_connect(0);
 
 	// Get flash chip information
-	dprintf("SPI Flash id: 0x%08X\n", sdk_spi_flash_get_id());
+	LOGI("SPI Flash id: 0x%08X", sdk_spi_flash_get_id());
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
@@ -692,46 +684,46 @@ void MwInit(void) {
 
 	// Create system queue
     if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
-		dprintf("Could not create system queue!\n");
+		LOGE("Could not create system queue!");
 		return;
 	};
   	// Create FSM task
 	if (pdPASS != xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
 			MW_FSM_PRIO, NULL)) {
-		dprintf("Could not create FSM task!\n");
+		LOGE("Could not create Fsm task!");
 	}
 	// Create task for receiving data from sockets
 	if (pdPASS != xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
 			MW_SOCK_PRIO, NULL)) {
-		dprintf("Could not create FSM task!\n");
+		LOGE("Could not create FsmSock task!");
 	}
 	// Create task for polling WiFi status
 	if (pdPASS != xTaskCreate(MwWiFiStatPollTsk, "WPOL", MW_WPOLL_STACK_LEN,
 			&d.q, MW_WPOLL_PRIO, NULL)) {
-		dprintf("Could not create FSM task!\n");
+		LOGE("Could not create WiFiStatPoll task!");
 	}
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
 	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_NUM_SERVERS_SUPPORTED) &&
 			((sntpLen = strlen(sntpSrv[i])) > 0); i++) {
 			sntpSrv[i + 1] = sntpSrv[i] + sntpLen + 1;
-			dprintf("SNTP server: %s\n", sntpSrv[i]);
+			LOGE("SNTP server: %s", sntpSrv[i]);
 	}
 	if (i) {
-		dprintf("%d SNTP servers found.\n", i);
+		LOGI("%d SNTP servers found.", i);
 		tz.tz_minuteswest = cfg.timezone * 60;
 		tz.tz_dsttime = cfg.dst;
 		tz.tz_minuteswest = 0;
 		sntp_initialize(&tz);
-		dprintf("Setting update delay to %d seconds.\n", cfg.ntpUpDelay);
+		LOGI("Setting update delay to %d seconds.", cfg.ntpUpDelay);
 		/// \todo FIXME Setting sntp servers breaks tasking when using
 		/// latest esp-open-rtos
 		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
 //		if (sntp_set_servers(sntpSrv, i)) {
-//			dprintf("Error setting SNTP servers!\n");
+//			LOGI("Error setting SNTP servers!");
 //			return;
 //		}
-	} else dprintf("No NTP servers found!\n");
+	} else LOGE("No NTP servers found!");
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(d.q);
 	LsdChEnable(MW_CTRL_CH);
@@ -750,6 +742,22 @@ static int MwSntpCfgGet(MwMsgSntpCfg *sntp) {
 		cfg.ntpPoolLen;
 }
 
+static void log_ip_cfg(MwMsgIpCfg *ip)
+{
+	char ip_str[16];
+
+	ipv4_to_str(ip->cfg.ip.addr, ip_str);
+	LOGI("IP:   %s", ip_str);
+	ipv4_to_str(ip->cfg.netmask.addr, ip_str);
+	LOGI("MASK: %s", ip_str);
+	ipv4_to_str(ip->cfg.gw.addr, ip_str);
+	LOGI("GW:   %s", ip_str);
+	ipv4_to_str(ip->dns1.addr, ip_str);
+	LOGI("DNS1: %s", ip_str);
+	ipv4_to_str(ip->dns2.addr, ip_str);
+	LOGI("DNS2: %s\n", ip_str);
+}
+
 /// Process command requests (coming from the serial line)
 int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
@@ -759,13 +767,13 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	
 	// Sanity check: total Lengt - header length = data length
 	if ((totalLen - MW_CMD_HEADLEN) != len) {
-		dprintf("MwFsmCmdProc, ERROR: Length inconsistent\n");
-		dprintf("totalLen=%d, dataLen=%d\n", totalLen, len);
+		LOGE("MwFsmCmdProc, ERROR: Length inconsistent");
+		LOGE("totalLen=%d, dataLen=%d", totalLen, len);
 		return MW_CMD_FMT_ERROR;
 	}
 
 	// parse command
-	dprintf("CmdRequest: %d\n", ByteSwapWord(c->cmd));
+	LOGI("CmdRequest: %d", ByteSwapWord(c->cmd));
 	switch (ByteSwapWord(c->cmd)) {
 		case MW_CMD_VERSION:
 			reply.cmd = MW_CMD_OK;
@@ -780,7 +788,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_ECHO:		// Echo request
 			reply.cmd = MW_CMD_OK;
 			reply.datalen = c->datalen;
-			dprintf("SENDING ECHO!\n");
+			LOGI("SENDING ECHO!");
 			// Send the command response
 			if ((LsdSplitStart((uint8_t*)&reply, MW_CMD_HEADLEN,
 					len + MW_CMD_HEADLEN, 0) == MW_CMD_HEADLEN) &&
@@ -794,7 +802,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// Only works when on IDLE state.
 			if (MW_ST_IDLE == d.s.sys_stat) {
 				d.s.sys_stat = MW_ST_SCAN;
-	    		dprintf("SCAN!\n");
+	    		LOGI("SCAN!");
 	    		sdk_wifi_station_scan(NULL, (sdk_scan_done_cb_t)
 						ScanCompleteCb);
 			}
@@ -804,14 +812,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datalen = 0;
 			tmp = c->apCfg.cfgNum;
 			if (tmp >= MW_NUM_AP_CFGS) {
-				dprintf("Tried to set AP for cfg %d!\n", tmp);
+				LOGE("Tried to set AP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
 				// Copy configuration and save it to flash
-				dprintf("Setting AP configuration %d...\n", tmp);
+				LOGI("Setting AP configuration %d...", tmp);
 				strncpy(cfg.ap[tmp].ssid, c->apCfg.ssid, MW_SSID_MAXLEN);
 				strncpy(cfg.ap[tmp].pass, c->apCfg.pass, MW_PASS_MAXLEN);
-				dprintf("ssid: %s\npass: %s\n", cfg.ap[tmp].ssid,
+				LOGI("ssid: %s, pass: %s", cfg.ap[tmp].ssid,
 						cfg.ap[tmp].pass);
 				cfg.defaultAp = tmp;
 				if (MwNvCfgSave() < 0) {
@@ -826,19 +834,19 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_AP_CFG_GET:
 			tmp = c->apCfg.cfgNum;
 			if (tmp >= MW_NUM_AP_CFGS) {
-				dprintf("Requested AP for cfg %d!\n", tmp);
+				LOGE("Requested AP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				reply.datalen = 0;
 				replen = 0;
 			} else {
-				dprintf("Getting AP configuration %d...\n", tmp);
+				LOGI("Getting AP configuration %d...", tmp);
 				reply.cmd = MW_CMD_OK;
 				replen = sizeof(MwMsgApCfg);
 				reply.datalen = ByteSwapWord(sizeof(MwMsgApCfg));
 				reply.apCfg.cfgNum = c->apCfg.cfgNum;
 				strncpy(reply.apCfg.ssid, cfg.ap[tmp].ssid, MW_SSID_MAXLEN);
 				strncpy(reply.apCfg.pass, cfg.ap[tmp].pass, MW_PASS_MAXLEN);
-				dprintf("ssid: %s\npass: %s\n", reply.apCfg.ssid,
+				LOGI("ssid: %s, pass: %s", reply.apCfg.ssid,
 						reply.apCfg.pass);
 			} 
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
@@ -847,19 +855,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_IP_CURRENT:
 			reply.datalen = replen = 0;
 			reply.cmd = MW_CMD_OK;
-			dprintf("Getting current IP configuration...\n");
+			LOGI("Getting current IP configuration...");
 			replen = sizeof(MwMsgIpCfg);
 			reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
 			reply.ipCfg.cfgNum = 0;
 			sdk_wifi_get_ip_info(STATION_IF, &reply.ipCfg.cfg);
 			reply.ipCfg.dns1 = *dns_getserver(0);
 			reply.ipCfg.dns2 = *dns_getserver(1);
-			dprintf("IP: "); PrintIp(reply.ipCfg.cfg.ip.addr);
-			dprintf("\nMASK: "); PrintIp(reply.ipCfg.cfg.netmask.addr);
-			dprintf("\nGW: "); PrintIp(reply.ipCfg.cfg.gw.addr);
-			dprintf("\nDNS1: "); PrintIp(reply.ipCfg.dns1.addr);
-			dprintf("\nDNS2: "); PrintIp(reply.ipCfg.dns2.addr);
-			dprintf("\n");
+			log_ip_cfg(&reply.ipCfg);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
@@ -867,19 +870,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = (uint8_t)c->ipCfg.cfgNum;
 			reply.datalen = 0;
 			if (tmp >= MW_NUM_AP_CFGS) {
-				dprintf("Tried to set IP for cfg %d!\n", tmp);
+				LOGE("Tried to set IP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
-				dprintf("Setting IP configuration %d...\n", tmp);
+				LOGI("Setting IP configuration %d...", tmp);
 				cfg.ip[tmp] = c->ipCfg.cfg;
 				cfg.dns[tmp][0] = c->ipCfg.dns1;
 				cfg.dns[tmp][1] = c->ipCfg.dns2;
-				dprintf("IP: "); PrintIp(cfg.ip[tmp].ip.addr);
-				dprintf("\nMASK: "); PrintIp(cfg.ip[tmp].netmask.addr);
-				dprintf("\nGW: "); PrintIp(cfg.ip[tmp].gw.addr);
-				dprintf("\nDNS1: "); PrintIp(cfg.dns[tmp][0].addr);
-				dprintf("\nDNS2: "); PrintIp(cfg.dns[tmp][1].addr);
-				dprintf("\n");
+				log_ip_cfg(&c->ipCfg);
 				if (MwNvCfgSave() < 0) {
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				} else {
@@ -893,10 +891,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = c->ipCfg.cfgNum;
 			reply.datalen = replen = 0;
 			if (tmp >= MW_NUM_AP_CFGS) {
-				dprintf("Requested IP for cfg %d!\n", tmp);
+				LOGE("Requested IP for cfg %d!", tmp);
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
-				dprintf("Getting IP configuration %d...\n", tmp);
+				LOGI("Getting IP configuration %d...", tmp);
 				reply.cmd = MW_CMD_OK;
 				replen = sizeof(MwMsgIpCfg);
 				reply.datalen = ByteSwapWord(sizeof(MwMsgIpCfg));
@@ -904,12 +902,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.ipCfg.cfg = cfg.ip[tmp];
 				reply.ipCfg.dns1 = cfg.dns[tmp][0];
 				reply.ipCfg.dns2 = cfg.dns[tmp][1];
-				dprintf("IP: "); PrintIp(cfg.ip[tmp].ip.addr);
-				dprintf("\nMASK: "); PrintIp(cfg.ip[tmp].netmask.addr);
-				dprintf("\nGW: "); PrintIp(cfg.ip[tmp].gw.addr);
-				dprintf("\nDNS1: "); PrintIp(cfg.dns[tmp][0].addr);
-				dprintf("\nDNS2: "); PrintIp(cfg.dns[tmp][1].addr);
-				dprintf("\n");
+				log_ip_cfg(&reply.ipCfg);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
@@ -919,11 +912,11 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = c->data[0];
 			if (tmp < MW_NUM_AP_CFGS) {
 				cfg.defaultAp = tmp;
-				dprintf("Set default AP: %d\n", cfg.defaultAp);
 				if (MwNvCfgSave() != 0) {
+					LOGE("Failed to set default AP: %d", cfg.defaultAp);
 					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				} else {
-					dprintf("Set default AP: %d\n", cfg.defaultAp);
+					LOGI("Set default AP: %d", cfg.defaultAp);
 					reply.cmd = MW_CMD_OK;
 				}
 			}
@@ -934,7 +927,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datalen = ByteSwapWord(1);
 			reply.cmd = MW_CMD_OK;
 			reply.data[0] = cfg.defaultAp;
-			dprintf("Sending default AP: %d\n", cfg.defaultAp);
+			LOGI("Sending default AP: %d", cfg.defaultAp);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 1, 0);
 			break;
 
@@ -944,7 +937,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			if ((c->data[0] >= MW_NUM_AP_CFGS) ||
 					!(cfg.ap[c->data[0]].ssid[0])) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Invalid AP_JOIN on config %d\n", c->data[0]);
+				LOGE("Invalid AP_JOIN on config %d", c->data[0]);
 			} else {
 				MwApJoin(c->data[0]);
 				reply.cmd = MW_CMD_OK;
@@ -954,20 +947,20 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_AP_LEAVE:	// Leave access point
-			dprintf("Disconnecting from AP\n");
+			LOGI("Disconnecting from AP");
 			// Close all opened sockets
 			MwFsmCloseAll();
 			// Disconnect and switch to IDLE state
 			sdk_wifi_station_disconnect();
 			d.s.sys_stat = MW_ST_IDLE;
-			dprintf("IDLE!\n");
+			LOGI("IDLE!");
 			reply.cmd = MW_OK;
 			reply.datalen = 0;
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_TCP_CON:
-			dprintf("TRYING TO CONNECT TCP SOCKET...\n");
+			LOGI("TRYING TO CONNECT TCP SOCKET...");
 			reply.datalen = 0;
 			reply.cmd = (MwFsmTcpCon(&c->inAddr) < 0)?ByteSwapWord(
 					MW_CMD_ERROR):MW_CMD_OK;
@@ -986,14 +979,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// If channel number OK, disconnect the socket on requested channel
 			if ((c->data[0] > 0) && (c->data[0] <= LSD_MAX_CH) &&
 					d.ss[c->data[0] - 1]) {
-				dprintf("Closing socket %d from channel %d\n",
+				LOGI("Closing socket %d from channel %d",
 						d.sock[c->data[0] - 1], c->data[0]);
 				MwSockClose(c->data[0]);
 				LsdChDisable(c->data[0]);
 				reply.cmd = MW_CMD_OK;
 			} else {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Requested disconnect of not opened channel %d.\n",
+				LOGE("Requested disconnect of not opened channel %d.",
 						c->data[0]);
 			}
 			reply.cmd = ByteSwapWord(reply.cmd);
@@ -1001,7 +994,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_UDP_SET:
-			dprintf("Configuring UDP socket...\n");
+			LOGI("Configuring UDP socket...");
 			reply.datalen = 0;
 			reply.cmd = (MwUdpSet(&c->inAddr) < 0)?ByteSwapWord(
 					MW_CMD_ERROR):MW_CMD_OK;
@@ -1018,13 +1011,13 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else {
 				reply.datalen = replen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Requested unavailable channel!\n");
+				LOGE("Requested unavailable channel!");
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_PING:
-			dprintf("PING unimplemented\n");
+			LOGE("PING unimplemented");
 			break;
 
 		case MW_CMD_SNTP_CFG:
@@ -1051,7 +1044,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			replen = MwSntpCfgGet(&reply.sntpCfg);
 			reply.datalen = ByteSwapWord(replen);
 			reply.cmd = MW_CMD_OK;
-			dprintf("sending configuration (%d bytes)\n", replen);
+			LOGI("sending configuration (%d bytes)", replen);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
@@ -1061,14 +1054,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datetime.dtBin[1] = ByteSwapDWord(ts);
 			ts = time(NULL);
 			strcpy(reply.datetime.dtStr, ctime(&ts));
-			dprintf("sending datetime %s\n", reply.datetime.dtStr);
+			LOGI("sending datetime %s", reply.datetime.dtStr);
 			tmp = 2*sizeof(uint32_t) + strlen(reply.datetime.dtStr);
 			reply.datalen = ByteSwapWord(tmp);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + tmp, 0);
 			break;
 
 		case MW_CMD_DT_SET:
-			dprintf("DT_SET unimplemented\n");
+			LOGE("DT_SET unimplemented");
 			break;
 
 		case MW_CMD_FLASH_WRITE:
@@ -1082,13 +1075,13 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			if ((c->flData.addr + (len - sizeof(uint32_t) - 1)) <
 					MW_FLASH_USER_BASE_ADDR) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Address/length combination overflows!\n");
+				LOGE("Address/length combination overflows!");
 			} else if (sdk_spi_flash_write(c->flData.addr,
 						(uint32_t*)c->flData.data, len - sizeof(uint32_t)) !=
 					SPI_FLASH_RESULT_OK) {
 //			} else if (!spiflash_write(c->flData.addr, (uint8_t*)c->flData.data,
 //					len - sizeof(uint32_t))) {
-				dprintf("Write to flash failed!\n");
+				LOGE("Write to flash failed!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1106,7 +1099,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 					c->flRange.len) < MW_FLASH_USER_BASE_ADDR)) {
 				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Invalid address/length combination.\n");
+				LOGE("Invalid address/length combination.");
 			// Perform read and check result
 			} else if (sdk_spi_flash_read(c->flRange.addr,
 						(uint32_t*)reply.data, c->flRange.len) !=
@@ -1115,11 +1108,11 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 //						(uint8_t*)reply.data, c->flRange.len)) {
 				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Flash read failed!\n");
+				LOGE("Flash read failed!");
 			} else {
 				reply.datalen = ByteSwapWord(c->flRange.len);
 				reply.cmd = MW_CMD_OK;
-				dprintf("Flash read OK!\n");
+				LOGI("Flash read OK!");
 			}
 			LsdSend((uint8_t*)&reply, c->flRange.len + MW_CMD_HEADLEN, 0);
 			break;
@@ -1130,15 +1123,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			c->flSect = ByteSwapWord(c->flSect) + MW_FLASH_USER_BASE_SECT;
 			if (c->flSect < MW_FLASH_USER_BASE_SECT) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Wrong sector number.\n");
+				LOGW("Wrong sector number.");
 			} else if (sdk_spi_flash_erase_sector(c->flSect) !=
 					SPI_FLASH_RESULT_OK) {
 //			} else if (!spiflash_erase_sector((c->flSect)<<12)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				dprintf("Sector erase failed!\n");
+				LOGE("Sector erase failed!");
 			} else {
 				reply.cmd = MW_CMD_OK;
-				dprintf("Sector erase OK!\n");
+				LOGE("Sector erase OK!");
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1152,7 +1145,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_SYS_STAT:
 			MwSysStatFill(&reply);
-			dprintf("%02X %02X %02X %02X\n", reply.data[0], reply.data[1],
+			LOGI("%02X %02X %02X %02X", reply.data[0], reply.data[1],
 					reply.data[2], reply.data[3]);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + sizeof(MwMsgSysStat),
 				0);
@@ -1163,15 +1156,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// Check lengt and magic value
 			if ((len != 4) || (c->dwData[0] !=
 						ByteSwapDWord(MW_FACT_RESET_MAGIC))) {
-				dprintf("Wrong DEF_CFG_SET command invocation!\n");
+				LOGE("Wrong DEF_CFG_SET command invocation!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else if (sdk_spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
 					SPI_FLASH_RESULT_OK) {
 //			} else if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
-				dprintf("Config flash sector erase failed!\n");
+				LOGE("Config flash sector erase failed!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
-				dprintf("Configuration set to default.\n");
+				LOGI("Configuration set to default.");
 				reply.cmd = MW_CMD_OK;
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1195,7 +1188,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			reply.datalen = ByteSwapWord(6);
 			reply.cmd = MW_CMD_OK;
 			sdk_wifi_get_macaddr(c->data[0], reply.data);
-			dprintf("Got BSSID(%d) %02X:%02X:%02X:%02X:%02X:%02X\n",
+			LOGI("Got BSSID(%d) %02X:%02X:%02X:%02X:%02X:%02X",
 					c->data[0], reply.data[0], reply.data[1],
 					reply.data[2], reply.data[3],
 					reply.data[4], reply.data[5]);
@@ -1251,7 +1244,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		default:
-			dprintf("UNKNOWN REQUEST!\n");
+			LOGE("UNKNOWN REQUEST!");
 			break;
 	}
 	return MW_OK;
@@ -1305,15 +1298,15 @@ void MwFsmReady(MwFsmMsg *msg) {
 
 	switch (msg->e) {
 		case MW_EV_WIFI:		///< WiFi events, excluding scan related.
-			dprintf("WIFI_EVENT (not parsed)\n");
+			LOGI("WIFI_EVENT (not parsed)");
 			break;
 
 		case MW_EV_SCAN:		///< WiFi scan complete.
-			dprintf("EV_SCAN (not parsed)\n");
+			LOGI("EV_SCAN (not parsed)");
 			break;
 
 		case MW_EV_SER_RX:		///< Data reception from serial line.
-			dprintf("Serial recvd %d bytes.\n", b->len);
+			LOGI("Serial recvd %d bytes.", b->len);
 			// If using channel 0, process command. Else forward message
 			// to the appropiate socket.
 			if (MW_CTRL_CH == b->ch) {
@@ -1321,7 +1314,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 				if (MwCmdInList(b->cmd.cmd>>8, readyCmdMask)) {
 					MwFsmCmdProc((MwCmd*)b, b->len);
 				} else {
-					dprintf("Command %d not allowed on READY state\n",
+					LOGE("Command %d not allowed on READY state",
 							b->cmd.cmd>>8);
 					// TODO: Throw error event?
 					rep = (MwCmd*)msg->d;
@@ -1333,7 +1326,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 				// Forward message if channel is enabled.
 				if (b->ch < LSD_MAX_CH && d.ss[b->ch - 1]) {
 					if (MwSend(b->ch, b->data, b->len) != b->len) {
-						dprintf("DEB: CH %d socket send error!\n", b->ch);
+						LOGE("ch %d socket send error!", b->ch);
 						// TODO throw error event?
 						rep = (MwCmd*)msg->d;
 						rep->datalen = 0;
@@ -1341,40 +1334,40 @@ void MwFsmReady(MwFsmMsg *msg) {
 						LsdSend((uint8_t*)rep, MW_CMD_HEADLEN, 0);
 					}
 				} else {
-					dprintf("Requested to forward data on wrong channel: %d\n",
+					LOGE("Requested to forward data on wrong channel: %d",
 							b->ch);
 				}
 			}
 			break;
 
 		case MW_EV_TCP_CON:		///< TCP connection established.
-			dprintf("TCP_CON (not parsed)\n");
+			LOGI("TCP_CON (not parsed)");
 			break;
 
 		case MW_EV_TCP_RECV:	///< Data received from TCP connection.
 			// Forward data to the appropiate channel of serial line
 //			LsdSend(, , d.ss[b->ch - 1]);
-			dprintf("TCP_RECV (not parsed)\n");
+			LOGI("TCP_RECV (not parsed)");
 			break;
 
 		case MW_EV_TCP_SENT:	///< Data sent to peer on TCP connection.
-			dprintf("TCP_SENT (not parsed)\n");
+			LOGI("TCP_SENT (not parsed)");
 			break;
 
 		case MW_EV_UDP_RECV:	///< Data received from UDP connection.
-			dprintf("UDP_RECV (not parsed)\n");
+			LOGI("UDP_RECV (not parsed)");
 			break;
 
 		case MW_EV_CON_DISC:	///< TCP disconnection.
-			dprintf("CON_DISC (not parsed)\n");
+			LOGI("CON_DISC (not parsed)");
 			break;
 
 		case MW_EV_CON_ERR:		///< TCP connection error.
-			dprintf("CON_ERR (not parsed)\n");
+			LOGI("CON_ERR (not parsed)");
 			break;
 
 		default:
-			dprintf("MwFsmReady: UNKNOKWN EVENT!");
+			LOGI("MwFsmReady: UNKNOKWN EVENT!");
 			break;
 	}
 }
@@ -1387,14 +1380,14 @@ static void MwFsm(MwFsmMsg *msg) {
 		case MW_ST_INIT:
 			// Ignore all events excepting the INIT DONE one
 			if (msg->e == MW_EV_INIT_DONE) {
-				dprintf("INIT DONE!\n");
+				LOGI("INIT DONE!");
 				// If there's a valid AP configuration, try to join it and
 				// jump to the AP_JOIN state. Else jump to IDLE state.
 //				if ((cfg.defaultAp >= 0) && (cfg.defaultAp < MW_NUM_AP_CFGS)) {
 //					MwApJoin(cfg.defaultAp);
 //					// TODO: Maybe we should set an AP join timeout.
 //				} else {
-//					dprintf("No default AP found.\nIDLE!\n");
+//					LOGE("No default AP found.\nIDLE!");
 					d.s.sys_stat = MW_ST_IDLE;
 //				}
 			}
@@ -1402,11 +1395,11 @@ static void MwFsm(MwFsmMsg *msg) {
 
 		case MW_ST_AP_JOIN:
 			if (MW_EV_WIFI == msg->e) {
-				dprintf("WiFi event: %d\n", (uint32_t)msg->d);
+				LOGI("WiFi event: %d", (uint32_t)msg->d);
 				switch ((uint32_t)msg->d) {
 					case STATION_GOT_IP:
 						// Connected!
-						dprintf("READY!\n");
+						LOGI("READY!");
 						d.s.sys_stat = MW_ST_READY;
 						d.s.online = TRUE;
 						break;
@@ -1421,7 +1414,7 @@ static void MwFsm(MwFsmMsg *msg) {
 					default:
 						// Error
 						sdk_wifi_station_disconnect();
-						dprintf("Could not connect to AP!\nIDLE!\n");
+						LOGE("Could not connect to AP!, IDLE!");
 						d.s.sys_stat = MW_ST_IDLE;
 				}
 			} else if (MW_EV_SER_RX == msg->e) {
@@ -1442,12 +1435,12 @@ static void MwFsm(MwFsmMsg *msg) {
 				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
 					MwSysStatFill(rep);
-					dprintf("%02X %02X %02X %02X\n", rep->data[0],
+					LOGI("%02X %02X %02X %02X", rep->data[0],
 							rep->data[1], rep->data[2], rep->data[3]);
 					LsdSend((uint8_t*)rep, sizeof(MwMsgSysStat) + MW_CMD_HEADLEN,
 							0);
 				} else {
-					dprintf("Command %d not allowed on AP_JOIN state\n",
+					LOGE("Command %d not allowed on AP_JOIN state",
 							b->cmd.cmd>>8);
 				}
 			}
@@ -1457,13 +1450,13 @@ static void MwFsm(MwFsmMsg *msg) {
 			// IDLE state is abandoned once connected to an AP
 			if (MW_EV_SER_RX == msg->e) {
 				// Parse commands on channel 0 only
-				dprintf("Serial recvd %d bytes.\n", b->len);
+				LOGD("Serial recvd %d bytes.", b->len);
 				if (MW_CTRL_CH == b->ch) {
 					// Check command is allowed on IDLE state
 					if (MwCmdInList(b->cmd.cmd>>8, idleCmdMask)) {
 						MwFsmCmdProc((MwCmd*)b, b->len);
 					} else {
-						dprintf("Command %d not allowed on IDLE state\n",
+						LOGE("Command %d not allowed on IDLE state",
 								b->cmd.cmd>>8);
 						// TODO: Throw error event?
 						rep = (MwCmd*)msg->d;
@@ -1472,7 +1465,7 @@ static void MwFsm(MwFsmMsg *msg) {
 						LsdSend((uint8_t*)rep, MW_CMD_HEADLEN, 0);
 					}
 				} else {
-					dprintf("IDLE received data on non ctrl channel!\n");
+					LOGE("IDLE received data on non ctrl channel!");
 				}
 			}
 			break;
@@ -1481,13 +1474,13 @@ static void MwFsm(MwFsmMsg *msg) {
 			// Ignore events until we receive the scan result
 			if (MW_EV_SCAN == msg->e) {
 				// We receive the station data reply ready to be sent
-				dprintf("Sending station data\n");
+				LOGI("Sending station data");
 				rep = (MwCmd*)msg->d;
 				LsdSend((uint8_t*)rep, ByteSwapWord(rep->datalen) +
 						MW_CMD_HEADLEN, 0);
 				free(rep);
 				d.s.sys_stat = MW_ST_IDLE;
-				dprintf("IDLE!\n");
+				LOGI("IDLE!");
 			}
 			break;
 
@@ -1500,7 +1493,7 @@ static void MwFsm(MwFsmMsg *msg) {
 			break;
 
 		case MW_ST_TRANSPARENT:
-			dprintf("TRANSPARENT!\n");
+			LOGI("TRANSPARENT!");
 			break;
 
 
@@ -1519,11 +1512,11 @@ static int MwAccept(int sock, int ch) {
 
 	if ((newsock = lwip_accept(sock, (struct sockaddr*)&caddr,
 					&addrlen)) < 0) {
-		dprintf("Accept failed for socket %d, channel %d\n", sock, ch);
+		LOGE("Accept failed for socket %d, channel %d", sock, ch);
 		return -1;
 	}
 	// Connection accepted, add to the FD set
-	dprintf("Socket %d, channel %d: established connection from %s.\n",
+	LOGI("Socket %d, channel %d: established connection from %s.",
 			newsock, ch, inet_ntoa(caddr.sin_addr));
 	FD_SET(newsock, &d.fds);
 	d.fdMax = MAX(newsock, d.fdMax);
@@ -1553,7 +1546,7 @@ static int MwUdpRecv(int idx, char *buf) {
 				(struct sockaddr*)&remote, &addr_len);
 		if (recvd > 0) {
 			if (remote.sin_addr.s_addr != d.raddr[idx].sin_addr.s_addr) {
-				dprintf("Discarding UDP packet from unknown addr\n");
+				LOGE("Discarding UDP packet from unknown addr");
 				recvd = -1;
 			}
 		}
@@ -1617,10 +1610,10 @@ void MwFsmSockTsk(void *pvParameters) {
 		// Wait until event or timeout
 		// TODO: d.fdMax is initialized to -1. How does select() behave if
 		// nfds = 0?
-		dprintf(".");
+		LOGD(".");
 		if ((retval = select(d.fdMax + 1, &readset, NULL, NULL, &tv)) < 0) {
 			// Error.
-			dprintf("select() completed with error!\n");
+			LOGE("select() completed with error!");
 			vTaskDelayMs(1000);
 			continue;
 		}
@@ -1634,29 +1627,29 @@ void MwFsmSockTsk(void *pvParameters) {
 				// Check if new connection or data received
 				ch = d.chan[i - LWIP_SOCKET_OFFSET];
 				if (d.ss[ch - 1] != MW_SOCK_TCP_LISTEN) {
-					dprintf("Rx: sock=%d, ch=%d\n", i, ch);
+					LOGD("Rx: sock=%d, ch=%d", i, ch);
 					if ((recvd = MwRecv(ch, (char*)buf, LSD_MAX_LEN)) < 0) {
 						// Error!
 						MwSockClose(ch);
 						LsdChDisable(ch);
-						dprintf("Error %d receiving from socket!\n", recvd);
+						LOGE("Error %d receiving from socket!", recvd);
 					} else if (0 == recvd) {
 						// Socket closed
 						// TODO: A listen on a socket closed, should trigger
 						// a 0-byte reception, for the client to be able to
 						// check server state and close the connection.
-						dprintf("Received 0!\n");
+						LOGD("Received 0!");
 						MwSockClose(ch);
-						dprintf("Socket closed!\n");
+						LOGE("Socket closed!");
 						MwFsmRaiseChEvent(ch);
 						// Send a 0-byte frame for the receiver to wake up and
 						// notice the socket close
 						LsdSend(NULL, 0, ch);
 						LsdChDisable(ch);
 					} else {
-						dprintf("%02X %02X %02X %02X: ", buf[0], buf[1],
-								buf[2], buf[3]);
-						dprintf("WF->MD %d bytes\n", recvd);
+						LOGD("%02X %02X %02X %02X: WF->MD %d bytes",
+								buf[0], buf[1], buf[2], buf[3],
+								recvd);
 						LsdSend(buf, (uint16_t)recvd, ch);
 					}
 				} else {
@@ -1675,13 +1668,13 @@ void MwFsmTsk(void *pvParameters) {
 
 	while(1) {
 		if (xQueueReceive(*q, &m, 1000)) {
-//			dprintf("Recv msg, evt=%d\n", m.e);
+//			LOGD("Recv msg, evt=%d", m.e);
 			MwFsm(&m);
 			// If event was MW_EV_SER_RX, free the buffer
 			LsdRxBufFree();
 		} else {
 			// ERROR
-			dprintf(".");
+			LOGD(".");
 		}
 	}
 }

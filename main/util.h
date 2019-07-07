@@ -2,6 +2,8 @@
 #define _UTIL_H_
 
 #include <stdint.h>
+#include <stdio.h>
+#include <esp_log.h>
 
 #ifndef TRUE
 #define TRUE 1
@@ -46,23 +48,43 @@
 #endif
 
 #ifdef _DEBUG_MSGS
-/// Prints message if debug is enabled
-#define dprintf(...)	do{printf(__VA_ARGS__);}while(0)
+#define LOGE(...) ESP_LOGE(__func__, __VA_ARGS__)
+#define LOGD(...) ESP_LOGD(__func__, __VA_ARGS__)
+#define LOGI(...) ESP_LOGI(__func__, __VA_ARGS__)
+#define LOGW(...) ESP_LOGW(__func__, __VA_ARGS__)
 /// Prints a msg using perror, and returns from the caller function.
 #define HandleError(msg, ret) \
-	do {perror(msg); return(ret);} while(0)
+	do {LOGE("%s", strerror(errno)); return(ret);} while(0)
 /// The same as above, for functions that do not directly set errno vairable.
 #define HandleErrorEn(en, msg, ret) \
-	do {errno = en; perror(msg); return(ret);} while(0)
+	do {LOGE("%s", strerror(en)); return(ret);} while(0)
 #else
-#define dprintf(...)
+#define LOGE(...)
+#define LOGD(...)
+#define LOGI(...)
+#define LOGW(...)
 #define HandleError(msg, ret)
 #define HandleErrorEn(en, msg, ret)
 #endif
 
-static inline void PrintIp(uint32_t addr) {
-    dprintf("%d.%d.%d.%d", 0xFF & addr, 0xFF & (addr>>8), 0xFF & (addr>>16),
-            addr>>24);
+
+static inline void md5_to_str(const uint8_t hex[16], char str[33])
+{
+	int i, j;
+	const char digits[] = "0123456789abcdef";
+
+	for (i = 0, j = 0; i < 16; i++) {
+		str[j++] = digits[hex[i]>>4];
+		str[j++] = digits[hex[i] & 0xF];
+	}
+
+	str[j] = '\0';
+}
+
+static inline int ipv4_to_str(uint32_t ipv4, char str[14])
+{
+	return sprintf(str, "%d.%d.%d.%d", 0xFF & ipv4, 0xFF & (ipv4>>8),
+		    0xFF & (ipv4>>16), ipv4>>24);
 }
 
 /// Similar to strcpy, but returns a pointer to the last character of the
