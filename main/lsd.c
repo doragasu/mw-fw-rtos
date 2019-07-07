@@ -12,12 +12,13 @@
  ****************************************************************************/
 #include <string.h>
 #include <unistd.h>
-//#include <esp/uart.h>
 
 #include "lsd.h"
-#include <semphr.h>
 #include "mw-msg.h"
 #include "util.h"
+
+#include <driver/uart.h>
+#include <semphr.h>
 
 /// Number of buffer frames available
 #define LSD_BUF_FRAMES			2
@@ -33,11 +34,11 @@
 typedef enum {
 	LSD_ST_IDLE = 0,		///< Currently inactive
 	LSD_ST_STX_WAIT,		///< Waiting for STX
-	LSD_ST_CH_LENH_RECV,	///< Receiving channel and length (high bits)
+	LSD_ST_CH_LENH_RECV,		///< Receiving channel and length (high bits)
 	LSD_ST_LEN_RECV,		///< Receiving frame length
 	LSD_ST_DATA_RECV,		///< Receiving data length
 	LSD_ST_ETX_RECV,		///< Receiving ETX
-	LSD_ST_MAX				///< Number of states
+	LSD_ST_MAX			///< Number of states
 } LsdState;
 /** \} */
 
@@ -45,11 +46,11 @@ typedef enum {
  *  \{ */
 typedef struct {
 	MwMsgBuf rx[LSD_BUF_FRAMES];	///< Reception buffers.
-	SemaphoreHandle_t sem;			///< Semaphore to control buffers
-	LsdState rxs;					///< Reception state
-	uint8_t en[LSD_MAX_CH];			///< Channel enable
-	uint16_t pos;					///< Position in current buffer
-	uint8_t current;				///< Current buffer in use
+	SemaphoreHandle_t sem;		///< Semaphore to control buffers
+	LsdState rxs;			///< Reception state
+	uint8_t en[LSD_MAX_CH];		///< Channel enable
+	uint16_t pos;			///< Position in current buffer
+	uint8_t current;		///< Current buffer in use
 } LsdData;
 /** \} */
 
@@ -62,40 +63,27 @@ void LsdRecvTsk(void *pvParameters);
 static LsdData d;
 
 /************************************************************************//**
- * Enables RTS/CTS function for pins MTDO_U and MTCK_U and configures UART0
- * to automatically generate RTS signal and use CTS line.
- ****************************************************************************/
-void Uart0AutoRtsCtsCfg(void) {
-	// Configure pin functions
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U, FUNC_UART0_RTS);
-	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_UART0_CTS);	
-
-	// Configure RX threshold
-	UART(0).CONF1 &= ~(UART_RX_FLOW_THRHD<<UART_RX_FLOW_THRHD_S);
-	UART(0).CONF1 |= (LSD_RX_RTS_THR & UART_RX_FLOW_THRHD)<<
-		UART_RX_FLOW_THRHD_S;
-
-	// Enable RX flow control
-	UART(0).CONF1 |= UART_CONF1_RX_FLOWCTRL_ENABLE;
-	// Enable TX flow control
-	UART(0).CONF0 |= UART_CONF0_TX_FLOW_ENABLE;
-}
-
-/************************************************************************//**
  * Module initialization. Call this function before any other one in this
  * module.
  ****************************************************************************/
 void LsdInit(QueueHandle_t q) {
+	uart_config_t lsd_uart = {
+		.baud_rate = LSD_UART_BR,
+		.data_bits = UART_DATA_8_BITS,
+		.parity = UART_PARITY_DISABLE,
+		.stop_bits = UART_STOP_BITS_1,
+		.flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS,
+		.rx_flow_ctrl_thresh = 122
+	};
 	// Set variables to default values
 	memset(&d, 0, sizeof(LsdData));
 	d.rxs = LSD_ST_STX_WAIT;
 	// Create semaphore used to handle receive buffers
 	d.sem = xSemaphoreCreateCounting(LSD_BUF_FRAMES, LSD_BUF_FRAMES);
 	// Create receive task
-		xTaskCreate(LsdRecvTsk, "LSDR", 512, q, LSD_RECV_PRIO, NULL);
-	// Configure UARTs
-	uart_set_baud(LSD_UART, LSD_UART_BR);
-	Uart0AutoRtsCtsCfg();
+	xTaskCreate(LsdRecvTsk, "LSDR", 512, q, LSD_RECV_PRIO, NULL);
+	// Configure UART
+	ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &lsd_uart));
 }
 
 /************************************************************************//**

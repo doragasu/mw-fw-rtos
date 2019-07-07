@@ -102,7 +102,7 @@ typedef struct {
 	/// Access point configuration (SSID, password).
 	ApCfg ap[MW_NUM_AP_CFGS];
 	/// IPv4 (IP addr, mask, gateway). If IP=0.0.0.0, use DHCP.
-	struct ip_info ip[MW_NUM_AP_CFGS];
+	ip_addr_t ip[MW_NUM_AP_CFGS];
 	/// DNS configuration (when not using DHCP). 2 servers per AP config.
 	ip_addr_t dns[MW_NUM_AP_CFGS][MW_NUM_DNS_SERVERS];
 	/// NTP update delay (in seconds, greater than 15)

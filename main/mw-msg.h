@@ -11,7 +11,7 @@
 #define _MW_MSG_H_
 
 #include <stdint.h>
-#include <lwip/ip_addr.h>
+#include <lwip/inet.h>
 
 /// Maximum SSID length (including '\0').
 #define MW_SSID_MAXLEN		32
@@ -96,7 +96,7 @@ typedef struct {
 typedef struct {
 	uint8_t cfgNum;
 	uint8_t reserved[3];
-	struct ip_info cfg;
+	in_addr_t cfg;
 	ip_addr_t dns1;
 	ip_addr_t dns2;
 } MwMsgIpCfg;
