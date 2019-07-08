@@ -11,9 +11,9 @@
 #include <string.h>
 
 // FreeRTOS
-#include <FreeRTOS.h>
-#include <task.h>
-#include <queue.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
 
 // lwIP
 #include <lwip/err.h>
@@ -32,6 +32,7 @@
 // WiFi
 #include <esp_system.h>
 #include <esp_wifi.h>
+#include <esp_event_loop.h>
 
 // Flash manipulation
 #include <spi_flash.h>
@@ -98,7 +99,6 @@ const static uint32_t readyCmdMask[2] = {
 static void MwFsm(MwFsmMsg *msg);
 void MwFsmTsk(void *pvParameters);
 void MwFsmSockTsk(void *pvParameters);
-void MwWiFiStatPollTsk(void *pvParameters);
 
 /** \addtogroup MwApi MwNvCfg Configuration saved to non-volatile memory.
  *  \{ */
@@ -169,6 +169,26 @@ static MwData d;
 static uint8_t buf[LSD_MAX_LEN];
 /// Global system status flags
 MwMsgSysStat s;
+
+static esp_err_t event_handler(void *ctx, system_event_t *event)
+{
+	QueueHandle_t q = (QueueHandle_t)ctx;
+	MwFsmMsg msg;
+
+	if (!ctx || !event) {
+		LOGE("missing ctx or event");
+		return ESP_ERR_INVALID_ARG;
+	}
+
+	// Forward event to sysfsm
+	// TODO When is event freed? It might be a problem if freed just
+	// after exiting this function.
+	msg.e = MW_EV_WIFI;
+	msg.d = event;
+
+	xQueueSend(q, &msg, portMAX_DELAY);
+	return ESP_OK;
+}
 
 /// Prints a list of found scanned stations
 static void ap_print(const wifi_ap_record_t *ap, int n_aps) {
@@ -253,6 +273,7 @@ static int wifi_scan(uint8_t *data)
 		goto out;
 	}
 	esp_wifi_scan_get_ap_records(&n_aps, ap);
+	ap_print(ap, n_aps);
 	length = build_scan_reply(ap, n_aps, data);
 
 
@@ -649,7 +670,7 @@ void MwSysStatFill(MwCmd *rep) {
  ****************************************************************************/
 void MwInit(void) {
 	MwFsmMsg m;
-	struct timezone tz;
+//	struct timezone tz;
 	char *sntpSrv[SNTP_MAX_SERVERS];
 	size_t sntpLen = 0;
 	int i;
@@ -683,10 +704,12 @@ void MwInit(void) {
 	SetIpCfg(tmp);
 
 	// Create system queue
-    if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
+	if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
 		LOGE("Could not create system queue!");
 		return;
 	};
+	// Start WiFi event handler
+	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, d.q));
   	// Create FSM task
 	if (pdPASS != xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
 			MW_FSM_PRIO, NULL)) {
@@ -696,11 +719,6 @@ void MwInit(void) {
 	if (pdPASS != xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
 			MW_SOCK_PRIO, NULL)) {
 		LOGE("Could not create FsmSock task!");
-	}
-	// Create task for polling WiFi status
-	if (pdPASS != xTaskCreate(MwWiFiStatPollTsk, "WPOL", MW_WPOLL_STACK_LEN,
-			&d.q, MW_WPOLL_PRIO, NULL)) {
-		LOGE("Could not create WiFiStatPoll task!");
 	}
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
@@ -1328,10 +1346,6 @@ void MwFsmReady(MwFsmMsg *msg) {
 			LOGI("WIFI_EVENT (not parsed)");
 			break;
 
-		case MW_EV_SCAN:		///< WiFi scan complete.
-			LOGI("EV_SCAN (not parsed)");
-			break;
-
 		case MW_EV_SER_RX:		///< Data reception from serial line.
 			LOGI("Serial recvd %d bytes.", b->len);
 			// If using channel 0, process command. Else forward message
@@ -1399,6 +1413,55 @@ void MwFsmReady(MwFsmMsg *msg) {
 	}
 }
 
+static void ap_join_ev_handler(system_event_t *wifi)
+{
+	LOGD("WiFi event: %d", wifi->event_id);
+	switch(wifi->event_id) {
+		case SYSTEM_EVENT_STA_START:
+			esp_wifi_connect();
+			break;
+
+		case SYSTEM_EVENT_STA_GOT_IP:
+			LOGI("got IP: %s, READY!", ip4addr_ntoa(
+					&wifi->event_info.got_ip.ip_info.ip));
+			d.s.sys_stat = MW_ST_READY;
+			d.s.online = TRUE;
+			break;
+
+		case SYSTEM_EVENT_AP_STACONNECTED:
+			LOGD("station:"MACSTR" join, AID=%d",
+					MAC2STR(wifi->event_info.sta_connected.mac),
+					wifi->event_info.sta_connected.aid);
+			break;
+
+		case SYSTEM_EVENT_AP_STADISCONNECTED:
+			LOGI("station:"MACSTR"leave, AID=%d",
+					MAC2STR(wifi->event_info.sta_disconnected.mac),
+					wifi->event_info.sta_disconnected.aid);
+			break;
+
+		case SYSTEM_EVENT_STA_DISCONNECTED:
+			LOGE("Disconnect reason : %d",
+					wifi->event_info.disconnected.reason);
+			if (wifi->event_info.disconnected.reason ==
+					WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
+				/*Switch to 802.11 bgn mode */
+				esp_wifi_set_protocol(ESP_IF_WIFI_STA,
+						WIFI_PROTOCAL_11B |
+						WIFI_PROTOCAL_11G |
+						WIFI_PROTOCAL_11N);
+			}
+			esp_wifi_connect();
+			break;
+
+		default:
+			esp_wifi_disconnect();
+			LOGE("unhandled event %d, connect failed, IDLE!",
+					wifi->event_id);
+			d.s.sys_stat = MW_ST_IDLE;
+	}
+}
+
 static void MwFsm(MwFsmMsg *msg) {
 	MwMsgBuf *b = msg->d;
 	MwCmd *rep;
@@ -1422,28 +1485,7 @@ static void MwFsm(MwFsmMsg *msg) {
 
 		case MW_ST_AP_JOIN:
 			if (MW_EV_WIFI == msg->e) {
-				LOGI("WiFi event: %d", (uint32_t)msg->d);
-				switch ((uint32_t)msg->d) {
-					case STATION_GOT_IP:
-						// Connected!
-						LOGI("READY!");
-						d.s.sys_stat = MW_ST_READY;
-						d.s.online = TRUE;
-						break;
-
-					case STATION_CONNECTING:
-						break;
-
-					case STATION_IDLE:
-					case STATION_WRONG_PASSWORD:
-					case STATION_NO_AP_FOUND:
-					case STATION_CONNECT_FAIL:
-					default:
-						// Error
-						sdk_wifi_station_disconnect();
-						LOGE("Could not connect to AP!, IDLE!");
-						d.s.sys_stat = MW_ST_IDLE;
-				}
+				ap_join_ev_handler(msg->d);
 			} else if (MW_EV_SER_RX == msg->e) {
 				// The only rx events supported during AP_JOIN are AP_LEAVE,
 				// VERSION_GET and SYS_STAT
@@ -1598,7 +1640,6 @@ static int MwRecv(int ch, char *buf, int len) {
 }
 
 /// Polls sockets for data or incoming connections using select()
-/// \note Maybe MwWiFiStatPollTsk() task should be merged with this one.
 void MwFsmSockTsk(void *pvParameters) {
 	fd_set readset;
 	int i, ch, retval;
@@ -1680,35 +1721,14 @@ void MwFsmTsk(void *pvParameters) {
 
 	while(1) {
 		if (xQueueReceive(*q, &m, 1000)) {
-//			LOGD("Recv msg, evt=%d", m.e);
+			LOGD("Recv msg, evt=%d", m.e);
 			MwFsm(&m);
 			// If event was MW_EV_SER_RX, free the buffer
 			LsdRxBufFree();
 		} else {
-			// ERROR
+			// Timeout
 			LOGD(".");
 		}
-	}
-}
-
-void MwWiFiStatPollTsk(void *pvParameters) {
-	QueueHandle_t *q = (QueueHandle_t *)pvParameters;
-	uint8_t con_stat, prev_con_stat;
-	MwFsmMsg m;
-
-	m.e = MW_EV_WIFI;
-
-	prev_con_stat = sdk_wifi_station_get_connect_status();
-
-	while(1) {
-		con_stat = sdk_wifi_station_get_connect_status();
-		if (con_stat != prev_con_stat) {
-			// Send WiFi event to FSM
-			m.d = (void*)((uint32_t)con_stat);
-			xQueueSend(*q, &m, portMAX_DELAY);
-			prev_con_stat = con_stat;
-		}
-		vTaskDelayMs(1000);
 	}
 }
 

@@ -36,9 +36,8 @@
 typedef enum {
 	MW_EV_NONE = 0,		///< No event.
 	MW_EV_INIT_DONE,	///< Initialization complete.
-	MW_EV_WIFI,			///< WiFi events, excluding scan related ones.
-	MW_EV_SCAN,			///< WiFi scan complete.
-	MW_EV_SNTP,			///< SNTP configured.
+	MW_EV_WIFI,		///< WiFi events.
+	MW_EV_SNTP,		///< SNTP configured.
 	MW_EV_SER_RX,		///< Data reception from serial line.
 	MW_EV_SER_TX,		///< Data transmission through serial line complete.
 	MW_EV_TCP_CON,		///< TCP connection established.
