@@ -128,7 +128,7 @@ int LsdChDisable(uint8_t ch) {
  * 		   otherwise.
  ****************************************************************************/
 int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
-	uint8_t scratch[3];
+	char scratch[3];
 
 	if (len > MW_MSG_MAX_BUFLEN || ch >= LSD_MAX_CH) {
 		LOGE("Invalid length (%d) or channel (%d).", len, ch);
@@ -144,11 +144,11 @@ int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
 	scratch[1] = (ch<<4) | (len>>8);
 	scratch[2] = len & 0xFF;
 	// Send STX, channel and length
-	write(LSD_UART, scratch, sizeof(scratch));
+	uart_write_bytes(LSD_UART, scratch, sizeof(scratch));
 	// Send data payload
-	write(LSD_UART, data, len);
+	uart_write_bytes(LSD_UART, (char*)data, len);
 	// Send ETX
-	write(LSD_UART, scratch, 1);
+	uart_write_bytes(LSD_UART, scratch, 1);
 
 	return len;
 }
@@ -169,7 +169,7 @@ int LsdSend(uint8_t *data, uint16_t len, uint8_t ch) {
  ****************************************************************************/
 int LsdSplitStart(uint8_t *data, uint16_t len,
 		              uint16_t total, uint8_t ch) {
-	uint8_t scratch[3];
+	char scratch[3];
 
 	if (total > MW_MSG_MAX_BUFLEN || ch >= LSD_MAX_CH) return -1;
 	if (!d.en[ch]) return 0;
@@ -179,10 +179,12 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
 	scratch[2] = total & 0xFF;
 	// Send STX, channel and length
 	LOGD("sending header");
-	write(LSD_UART, scratch, sizeof(scratch));
+	uart_write_bytes(LSD_UART, scratch, sizeof(scratch));
 	// Send data payload
 	LOGD("sending %d bytes", len);
-	if (len) write(LSD_UART, data, len);
+	if (len) {
+		uart_write_bytes(LSD_UART, (char*)data, len);
+	}
 	return len;
 }
 
@@ -199,7 +201,7 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
 int LsdSplitNext(uint8_t *data, uint16_t len) {
 	// send data
 	LOGD("Sending %d bytes", len);
-	write(LSD_UART, data, len);
+	uart_write_bytes(LSD_UART, (char*)data, len);
 	return len;
 }
 
@@ -214,15 +216,15 @@ int LsdSplitNext(uint8_t *data, uint16_t len) {
  * 		   otherwise.
  ****************************************************************************/
 int LsdSplitEnd(uint8_t *data, uint16_t len) {
-	uint8_t scratch = LSD_STX_ETX;
+	char scratch = LSD_STX_ETX;
 
 	// Send data
 	LOGD("Sending %d bytes", len);
-	write(LSD_UART, data, len);
+	uart_write_bytes(LSD_UART, (char*)data, len);
 	
 	// Send ETX
 	LOGD("Sending ETX");
-	write(LSD_UART, &scratch, 1);
+	uart_write_bytes(LSD_UART, &scratch, 1);
 
 	return len;
 }
@@ -260,7 +262,7 @@ void LsdRecvTsk(void *pvParameters) {
 			// TODO: Optimize receive routine (requires modifying the interrupt
 			// reception module to allow configuring FIFO triggers and to also
 			// use timeout interrupts.
-			if (read(LSD_UART, &recv, 1)) {
+			if (uart_read_bytes(LSD_UART, &recv, 1, portMAX_DELAY)) {
 				switch (d.rxs) {
 					case LSD_ST_IDLE:			// Do nothing!
 						break;
@@ -325,7 +327,7 @@ void LsdRecvTsk(void *pvParameters) {
 						// Code should never reach here!
 						break;
 				} // switch(d.rxs)
-			} // if (read(...))
+			} // if (uart_read_bytes(...))
 		} // while(receiving)
 	} // while(1)
 }

@@ -571,13 +571,11 @@ int MwNvCfgSave(void) {
 	LOGI("Saved MD5: %s", md5_str);
 #endif
 	// Erase configuration sector
-//	if (!spiflash_erase_sector(MW_CFG_FLASH_ADDR)) {
 	if (spi_flash_erase_sector(MW_CFG_FLASH_SECT) != ESP_OK) {
 		LOGE("Flash sector 0x%X erase failed!", MW_CFG_FLASH_SECT);
 		return -1;
 	}
 	// Write configuration to flash
-//	if (!spiflash_write(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg))) {
 	if (spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
 			sizeof(MwNvCfg)) != ESP_OK) {
 		LOGE("Flash write addr 0x%X failed!", MW_CFG_FLASH_ADDR);
@@ -597,7 +595,6 @@ int MwCfgLoad(void) {
 	uint8_t md5[16];
 
 	// Load configuration from flash
-//	spiflash_read(MW_CFG_FLASH_ADDR, (uint8_t*)&cfg, sizeof(MwNvCfg));
 	spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
 	// Check MD5
 	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
@@ -1120,8 +1117,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else if (spi_flash_write(c->flData.addr,
 						(uint32_t*)c->flData.data, len - sizeof(uint32_t)) !=
 					ESP_OK) {
-//			} else if (!spiflash_write(c->flData.addr, (uint8_t*)c->flData.data,
-//					len - sizeof(uint32_t))) {
 				LOGE("Write to flash failed!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			}
@@ -1145,8 +1140,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			} else if (spi_flash_read(c->flRange.addr,
 						(uint32_t*)reply.data, c->flRange.len) !=
 					ESP_OK) {
-//			} else if (!spiflash_read(c->flRange.addr,
-//						(uint8_t*)reply.data, c->flRange.len)) {
 				reply.datalen = 0;
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Flash read failed!");
@@ -1167,7 +1160,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				LOGW("Wrong sector number.");
 			} else if (spi_flash_erase_sector(c->flSect) !=
 					ESP_OK) {
-//			} else if (!spiflash_erase_sector((c->flSect)<<12)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 				LOGE("Sector erase failed!");
 			} else {
