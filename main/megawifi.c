@@ -722,7 +722,7 @@ void MwInit(void) {
 	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_MAX_SERVERS) &&
 			((sntpLen = strlen(sntpSrv[i])) > 0); i++) {
 			sntpSrv[i + 1] = sntpSrv[i] + sntpLen + 1;
-			LOGE("SNTP server: %s", sntpSrv[i]);
+			LOGI("SNTP server: %s", sntpSrv[i]);
 	}
 	// FIXME: SNTP not supported on ESP8266_RTOS_SDK
 //	if (i) {

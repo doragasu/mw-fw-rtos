@@ -84,6 +84,8 @@ void LsdInit(QueueHandle_t q) {
 	xTaskCreate(LsdRecvTsk, "LSDR", 512, q, LSD_RECV_PRIO, NULL);
 	// Configure UART
 	ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &lsd_uart));
+//	ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 1, 3, 15, 13));
+	ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, LSD_MAX_LEN, LSD_MAX_LEN, 0, NULL));
 }
 
 /************************************************************************//**

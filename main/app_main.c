@@ -5,7 +5,7 @@
 
 void app_main(void) {
 	// UART2 is used for logging.
-	LOGI("\n=== MeGaWiFi firmware version %d.%d-%s ===",
+	LOGI("=== MeGaWiFi firmware version %d.%d-%s ===",
 			MW_FW_VERSION_MAJOR, MW_FW_VERSION_MINOR, MW_FW_VARIANT);
 	LOGI("            doragasu, 2016 ~ 2019\n");
 	// Power the LED on
