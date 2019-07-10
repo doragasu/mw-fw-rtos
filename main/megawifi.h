@@ -47,13 +47,11 @@
 #define MW_SNTP_SERV_2		"2.pool.ntp.org"
 
 /// Stack size (in elements) for FSM task
-#define MW_FSM_STACK_LEN	1024
+//#define MW_FSM_STACK_LEN	1024
+#define MW_FSM_STACK_LEN	4096
 
 /// Stack size (in elements) for SOCK task
 #define MW_SOCK_STACK_LEN	1024
-
-/// Stack size (in elements) for WPOLL task
-#define MW_WPOLL_STACK_LEN	256
 
 /// Control channel used for command interpreter
 #define MW_CTRL_CH			0
@@ -142,7 +140,7 @@ typedef struct {
 #define MW_CMD_DATA(pCmd)		(((uint8_t*)pCmd)+sizeof(MwCmd))
 
 
-void MwInit(void);
+int MwInit(void);
 
 /** \} */
 

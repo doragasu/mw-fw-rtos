@@ -12,6 +12,8 @@ void app_main(void) {
 	led_init();
 	led_on();
 	// Initialize MeGaWiFi system and FSM
-	MwInit();
+	if (MwInit()) {
+		abort();
+	}
 	LOGI("Init done!");
 }

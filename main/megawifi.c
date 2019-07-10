@@ -259,23 +259,33 @@ static int wifi_scan(uint8_t *data)
 	uint16_t n_aps = 0;
 	wifi_ap_record_t *ap = NULL;
 	wifi_scan_config_t scan_cfg = {};
+	esp_err_t err;
 
-	esp_wifi_start();
-	if (ESP_OK != esp_wifi_scan_start(&scan_cfg, true)) {
-		LOGE("scan failed!");
+	err = esp_wifi_start();
+	if (ESP_OK != err) {
+		LOGE("wifi start failed: %s!", esp_err_to_name(err));
+		goto out;
+	}
+	err = esp_wifi_scan_start(&scan_cfg, true);
+	if (ESP_OK != err) {
+		LOGE("scan failed: %s!", esp_err_to_name(err));
 		goto out;
 	}
 
-	n_aps = esp_wifi_scan_get_ap_num(&n_aps);
+	esp_wifi_scan_get_ap_num(&n_aps);
+	LOGI("found %d APs", n_aps);
 	ap = calloc(n_aps, sizeof(wifi_ap_record_t));
  	if (!ap) {
 		LOGE("out of memory!");
 		goto out;
 	}
-	esp_wifi_scan_get_ap_records(&n_aps, ap);
+	err = esp_wifi_scan_get_ap_records(&n_aps, ap);
+	if (ESP_OK != err) {
+		LOGE("get AP records failed: %s", esp_err_to_name(err));
+		goto out;
+	}
 	ap_print(ap, n_aps);
 	length = build_scan_reply(ap, n_aps, data);
-
 
 out:
 	if (ap) {
@@ -665,23 +675,15 @@ void MwSysStatFill(MwCmd *rep) {
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/
-void MwInit(void) {
+int MwInit(void) {
 	MwFsmMsg m;
 //	struct timezone tz;
 	char *sntpSrv[SNTP_MAX_SERVERS];
 	size_t sntpLen = 0;
 	int i;
 	uint8_t tmp;
+	esp_err_t err;
 	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
-
-	tcpip_adapter_init();
-//	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL) );
-	// Configure and start WiFi interface
-	ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
-	esp_wifi_set_storage(WIFI_STORAGE_RAM);
-//	esp_wifi_set_auto_connect(false); // deprecated
-	esp_wifi_set_mode(WIFI_MODE_STA);
-//	esp_wifi_start();
 
 	LOGI("Configured SPI length: %d", spi_flash_get_chip_size());
 	// Load configuration from flash
@@ -702,20 +704,36 @@ void MwInit(void) {
 
 	// Create system queue
 	if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
-		LOGE("Could not create system queue!");
-		return;
+		LOGE("could not create system queue!");
+		goto err;
 	};
-	// Start WiFi event handler
-	ESP_ERROR_CHECK(esp_event_loop_init(event_handler, d.q));
+
+	tcpip_adapter_init();
+	err = esp_event_loop_init(event_handler, d.q);
+	if (err) {
+		LOGE("failed to initialize event loop: %d", err);
+		goto err;
+	}
+	// Configure and start WiFi interface
+	err = esp_wifi_init(&wifi_cfg);
+	if (err) {
+		LOGE("wifi init failed: %s", esp_err_to_name(err));
+		goto err;
+	}
+	esp_wifi_set_storage(WIFI_STORAGE_RAM);
+	esp_wifi_set_mode(WIFI_MODE_STA);
+
   	// Create FSM task
 	if (pdPASS != xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
 			MW_FSM_PRIO, NULL)) {
 		LOGE("Could not create Fsm task!");
+		goto err;
 	}
 	// Create task for receiving data from sockets
 	if (pdPASS != xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
 			MW_SOCK_PRIO, NULL)) {
 		LOGE("Could not create FsmSock task!");
+		goto err;
 	}
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
@@ -744,6 +762,12 @@ void MwInit(void) {
 	// Send the init done message
 	m.e = MW_EV_INIT_DONE;
 	xQueueSend(d.q, &m, portMAX_DELAY);
+
+	return 0;
+
+err:
+	LOGE("fatal error during initialization");
+	return 1;
 }
 
 static int MwSntpCfgGet(MwMsgSntpCfg *sntp) {
@@ -1420,16 +1444,9 @@ static void ap_join_ev_handler(system_event_t *wifi)
 			d.s.online = TRUE;
 			break;
 
-		case SYSTEM_EVENT_AP_STACONNECTED:
-			LOGD("station:"MACSTR" join, AID=%d",
-					MAC2STR(wifi->event_info.sta_connected.mac),
-					wifi->event_info.sta_connected.aid);
-			break;
-
-		case SYSTEM_EVENT_AP_STADISCONNECTED:
-			LOGI("station:"MACSTR"leave, AID=%d",
-					MAC2STR(wifi->event_info.sta_disconnected.mac),
-					wifi->event_info.sta_disconnected.aid);
+		case SYSTEM_EVENT_STA_CONNECTED:
+			LOGD("station:"MACSTR" join",
+					MAC2STR(wifi->event_info.connected.bssid));
 			break;
 
 		case SYSTEM_EVENT_STA_DISCONNECTED:
@@ -1447,9 +1464,9 @@ static void ap_join_ev_handler(system_event_t *wifi)
 			break;
 
 		default:
-			esp_wifi_disconnect();
 			LOGE("unhandled event %d, connect failed, IDLE!",
 					wifi->event_id);
+			esp_wifi_disconnect();
 			d.s.sys_stat = MW_ST_IDLE;
 	}
 }

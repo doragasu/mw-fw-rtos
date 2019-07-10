@@ -62,6 +62,7 @@ typedef enum {
 	MW_ST_INIT = 0,		///< Initialization state.
 	MW_ST_IDLE,			///< Idle state, until connected to an AP.
 	MW_ST_AP_JOIN,		///< Trying to join an access point.
+	MW_ST_RESERVED,
 	MW_ST_READY,		///< Connected to The Internet.
 	MW_ST_TRANSPARENT,	///< Transparent communication state.
 	MW_ST_MAX			///< Limit number for state machine.
