@@ -630,12 +630,14 @@ int MwCfgLoad(void) {
 }
 
 static void SetIpCfg(int slot) {
+	esp_err_t err;
+
 	if ((cfg.ip[slot].ip.addr) && (cfg.ip[slot].netmask.addr)
 				&& (cfg.ip[slot].gw.addr)) {
 		tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
-		if (tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA,
-					cfg.ip + slot)) {
-			LOGI("Static IP configuration set.");
+		err = tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &cfg.ip[slot]);
+		if (!err) {
+			LOGI("static IP configuration %d set", slot);
 			// Set DNS servers if available
 			if (cfg.dns[slot][0].addr) {
 				dns_setserver(0, cfg.dns[slot] + 0);
@@ -644,7 +646,8 @@ static void SetIpCfg(int slot) {
 				}
 			}
 		} else {
-			LOGE("Failed setting static IP configuration.");
+			LOGE("failed setting static IP configuration %d: %s",
+					slot, esp_err_to_name(err));
 			tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 		}
 	} else {
