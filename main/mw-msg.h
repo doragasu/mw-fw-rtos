@@ -171,7 +171,8 @@ typedef union {
 		uint8_t online:1;		///< Module is connected to the Internet
 		uint8_t cfg_ok:1;		///< Configuration OK
 		uint8_t dt_ok:1;		///< Date and time synchronized at least once
-		uint16_t reserved:5;	///< Reserved flags
+		uint8_t cfg:2;		///< Date and time synchronized at least once
+		uint16_t reserved:3;	///< Reserved flags
 		uint16_t ch_ev:16;		///< Channel flags with the pending event
 	};
 } MwMsgSysStat;

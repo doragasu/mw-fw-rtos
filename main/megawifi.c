@@ -167,8 +167,6 @@ static MwNvCfg cfg;
 static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
-/// Global system status flags
-MwMsgSysStat s;
 
 static esp_err_t event_handler(void *ctx, system_event_t *event)
 {
@@ -212,14 +210,14 @@ static void ap_print(const wifi_ap_record_t *ap, int n_aps) {
 static void MwFsmRaiseChEvent(int ch) {
 	if ((ch < 1) || (ch >= LSD_MAX_CH)) return;
 
-	s.ch_ev |= 1<<ch;
+	d.s.ch_ev |= 1<<ch;
 }
 
 // Clears an event pending flag on requested channel
 static void MwFsmClearChEvent(int ch) {
 	if ((ch < 1) || (ch >= LSD_MAX_CH)) return;
 
-	s.ch_ev &= ~(1<<ch);
+	d.s.ch_ev &= ~(1<<ch);
 }
 
 static int build_scan_reply(const wifi_ap_record_t *ap, uint8_t n_aps,
@@ -673,6 +671,7 @@ void MwSysStatFill(MwCmd *rep) {
 	rep->cmd = MW_CMD_OK;
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.st_flags = d.s.st_flags;
+	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags, sizeof(MwMsgSysStat));
 }
 
 /************************************************************************//**
@@ -692,7 +691,7 @@ int MwInit(void) {
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
-	s.st_flags = 0;
+	d.s.st_flags = 0;
 	memset(&d, 0, sizeof(d));
 	d.s.sys_stat = MW_ST_INIT;
 	for (i = 0; i < MW_MAX_SOCK; i++) {
@@ -1359,10 +1358,11 @@ void MwFsmReady(MwFsmMsg *msg) {
 	// Pointer to the message buffer (from RX line).
 	MwMsgBuf *b = msg->d;
 	MwCmd *rep;
+	system_event_t *wifi = msg->d;
 
 	switch (msg->e) {
 		case MW_EV_WIFI:		///< WiFi events, excluding scan related.
-			LOGI("WIFI_EVENT (not parsed)");
+			LOGI("WIFI_EVENT %d (not parsed)", wifi->event_id);
 			break;
 
 		case MW_EV_SER_RX:		///< Data reception from serial line.
@@ -1503,7 +1503,7 @@ static void MwFsm(MwFsmMsg *msg) {
 				// VERSION_GET and SYS_STAT
 				if (MW_CMD_AP_LEAVE == (b->cmd.cmd>>8)) {
 					MwFsmCmdProc((MwCmd*)b, b->len);
-				} else if (MW_CMD_VERSION) {
+				} else if (MW_CMD_VERSION == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
 					rep->cmd = MW_CMD_OK;
 					rep->datalen = ByteSwapWord(2 + sizeof(MW_FW_VARIANT) - 1);
