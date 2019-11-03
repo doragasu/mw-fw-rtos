@@ -77,7 +77,7 @@
 /// Maximum data payload length
 /// TODO IMPORTANT: This should be dynamically configurable!
 //#define LSD_MAX_LEN		 4095
-#define LSD_MAX_LEN		 1440
+#define LSD_MAX_LEN		 CONFIG_TCP_MSS
 
 /************************************************************************//**
  * Module initialization. Call this function before any other one in this
