@@ -33,6 +33,7 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <esp_event_loop.h>
+#include <esp_sleep.h>
 
 // Flash manipulation
 #include <spi_flash.h>
@@ -70,7 +71,8 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<MW_CMD_SYS_STAT)              | (1<<MW_CMD_DEF_CFG_SET),
 	(1<<(MW_CMD_HRNG_GET - 32))       | (1<<(MW_CMD_BSSID_GET - 32))    |
 	(1<<(MW_CMD_GAMERTAG_SET - 32))   | (1<<(MW_CMD_GAMERTAG_GET - 32)) |
-	(1<<(MW_CMD_LOG - 32))            | (1<<(MW_CMD_FACTORY_RESET - 32))
+	(1<<(MW_CMD_LOG - 32))            | (1<<(MW_CMD_FACTORY_RESET - 32))|
+	(1<<(MW_CMD_SLEEP - 32))
 };
 
 /// Commands allowed while in READY state
@@ -90,7 +92,7 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<MW_CMD_SYS_STAT)             | (1<<MW_CMD_DEF_CFG_SET),
 	(1<<(MW_CMD_HRNG_GET - 32))      | (1<<(MW_CMD_BSSID_GET - 32))     |
 	(1<<(MW_CMD_GAMERTAG_SET - 32))  | (1<<(MW_CMD_GAMERTAG_GET - 32))  |
-	(1<<(MW_CMD_LOG - 32))
+	(1<<(MW_CMD_LOG - 32))           | (1<<(MW_CMD_SLEEP - 32))
 };
 
 /*
@@ -1304,6 +1306,15 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.cmd = MW_CMD_OK;
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_SLEEP:
+			// No reply, wakeup continues from user_init()
+			LOGI("Entering deep sleep");
+			esp_deep_sleep(0);
+			// As it takes a little for the module to enter deep
+			// sleep, stay here for a while
+			vTaskDelayMs(60000);
 			break;
 
 		default:

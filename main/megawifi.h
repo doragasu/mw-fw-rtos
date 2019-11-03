@@ -122,6 +122,7 @@
 #define MW_CMD_GAMERTAG_GET		 35		///< Gets a stored gamertag
 #define MW_CMD_LOG			 36		///< Write LOG information
 #define MW_CMD_FACTORY_RESET		 37		///< Set all settings to default
+#define MW_CMD_SLEEP			 38		///< Set the module to sleep mode
 #define MW_CMD_ERROR			255		///< Error command reply
 /** \} */
 
