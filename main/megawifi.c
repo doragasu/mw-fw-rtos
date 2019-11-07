@@ -1018,7 +1018,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			MwFsmCloseAll();
 			// Disconnect and switch to IDLE state
 			esp_wifi_disconnect();
+			esp_wifi_stop();
 			d.s.sys_stat = MW_ST_IDLE;
+			d.s.online = FALSE;
 			LOGI("IDLE!");
 			reply.cmd = MW_OK;
 			reply.datalen = 0;
@@ -1473,8 +1475,8 @@ static void ap_join_ev_handler(system_event_t *wifi)
 						WIFI_PROTOCAL_11B |
 						WIFI_PROTOCAL_11G |
 						WIFI_PROTOCAL_11N);
+				esp_wifi_connect();
 			}
-			esp_wifi_connect();
 			break;
 
 		default:
