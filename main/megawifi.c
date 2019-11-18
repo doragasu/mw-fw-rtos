@@ -49,6 +49,9 @@
 /// Flash sector number where the configuration is stored
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
+/// Maximum number of reassociation attempts
+#define MW_REASSOC_MAX		3
+
 /** \addtogroup MwApi MwFdOps FD set operations (add/remove)
  *  \{ */
 typedef enum {
@@ -157,6 +160,8 @@ typedef struct {
 	int fdMax;
 	/// Address of the remote end, used in UDP sockets
 	struct sockaddr_in raddr[MW_MAX_SOCK];
+	/// Association retries
+	uint8_t n_reassoc;
 } MwData;
 /** \} */
 
@@ -666,6 +671,7 @@ void MwApJoin(uint8_t n) {
 	esp_wifi_start();
 	LOGI("AP ASSOC %d", n);
 	d.s.sys_stat = MW_ST_AP_JOIN;
+	d.n_reassoc = 0;
 }
 
 void MwSysStatFill(MwCmd *rep) {
@@ -1466,16 +1472,23 @@ static void ap_join_ev_handler(system_event_t *wifi)
 			break;
 
 		case SYSTEM_EVENT_STA_DISCONNECTED:
-			LOGE("Disconnect reason : %d",
+			d.n_reassoc++;
+			LOGE("Disconnect %d, reason : %d", d.n_reassoc,
 					wifi->event_info.disconnected.reason);
-			if (wifi->event_info.disconnected.reason ==
-					WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
-				/*Switch to 802.11 bgn mode */
-				esp_wifi_set_protocol(ESP_IF_WIFI_STA,
-						WIFI_PROTOCAL_11B |
-						WIFI_PROTOCAL_11G |
-						WIFI_PROTOCAL_11N);
+			if (d.n_reassoc < MW_REASSOC_MAX) {
+				if (wifi->event_info.disconnected.reason ==
+						WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
+					/*Switch to 802.11 bgn mode */
+					esp_wifi_set_protocol(ESP_IF_WIFI_STA,
+							WIFI_PROTOCAL_11B |
+							WIFI_PROTOCAL_11G |
+							WIFI_PROTOCAL_11N);
+				}
 				esp_wifi_connect();
+			} else {
+				LOGE("Too many assoc attempts, dessisting");
+				esp_wifi_disconnect();
+				d.s.sys_stat = MW_ST_IDLE;
 			}
 			break;
 
