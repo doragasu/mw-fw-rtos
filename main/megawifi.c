@@ -14,6 +14,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/timers.h>
 
 // lwIP
 #include <lwip/err.h>
@@ -51,6 +52,9 @@
 
 /// Maximum number of reassociation attempts
 #define MW_REASSOC_MAX		3
+
+/// Sleep timer period in ms
+#define MW_SLEEP_TIMER_MS	30000
 
 /** \addtogroup MwApi MwFdOps FD set operations (add/remove)
  *  \{ */
@@ -154,6 +158,8 @@ typedef struct {
 //	os_timer_t sntpTimer;
 	/// FSM queue for event reception
 	QueueHandle_t q;
+	/// Sleep inactivity timer
+	TimerHandle_t tim;
 	/// File descriptor set for select()
 	fd_set fds;
 	/// Maximum socket identifier value
@@ -174,6 +180,22 @@ static MwNvCfg cfg;
 static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
+
+static void deep_sleep(void)
+{
+	LOGI("Entering deep sleep");
+	esp_deep_sleep(0);
+	// As it takes a little for the module to enter deep
+	// sleep, stay here for a while
+	vTaskDelayMs(60000);
+}
+
+void sleep_timer_cb(TimerHandle_t xTimer)
+{
+	UNUSED_PARAM(xTimer);
+
+	deep_sleep();
+}
 
 static esp_err_t event_handler(void *ctx, system_event_t *event)
 {
@@ -773,6 +795,11 @@ int MwInit(void) {
 	m.e = MW_EV_INIT_DONE;
 	xQueueSend(d.q, &m, portMAX_DELAY);
 
+	// TODO Start the one-shot inactivity sleep timer
+	d.tim = xTimerCreate("SLEEP", MW_SLEEP_TIMER_MS / portTICK_PERIOD_MS,
+			pdFALSE, (void*) 0, sleep_timer_cb);
+	xTimerStart(d.tim, MW_SLEEP_TIMER_MS / portTICK_PERIOD_MS);
+
 	return 0;
 
 err:
@@ -844,6 +871,12 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	LOGI("CmdRequest: %d", ByteSwapWord(c->cmd));
 	switch (ByteSwapWord(c->cmd)) {
 		case MW_CMD_VERSION:
+			// Cancel sleep timer
+			if (d.tim) {
+				xTimerStop(d.tim, 0);
+				xTimerDelete(d.tim, 0);
+				d.tim = NULL;
+			}
 			reply.cmd = MW_CMD_OK;
 			reply.datalen = ByteSwapWord(2 + sizeof(MW_FW_VARIANT) - 1);
 			reply.data[0] = MW_FW_VERSION_MAJOR;
@@ -1318,11 +1351,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_SLEEP:
 			// No reply, wakeup continues from user_init()
-			LOGI("Entering deep sleep");
-			esp_deep_sleep(0);
-			// As it takes a little for the module to enter deep
-			// sleep, stay here for a while
-			vTaskDelayMs(60000);
+			deep_sleep();
 			break;
 
 		default:
