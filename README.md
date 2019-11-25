@@ -2,28 +2,35 @@
 Firmare for the ESP8266 WiFi module installed in MegaWiFi cartridges. This firmware talks directly to the MegaWiFi API (mw-api) running on the Genesis/MegaDrive console, allowing it to connect to WiFi access points, and to send and receive data through The Internet using standard TCP and UDP protocols. There are some additional goodies provided by the firmware, like flash read/write functions and SNTP time synchronization.
 
 # Building
-Although building the firmware on Windows might be possible, Windows build environments are not supported. A GNU/Linux machine is recommended. This firmware uses [esp-open-rtos](https://github.com/SuperHouse/esp-open-rtos) framework, but as the original project (as of today) lacks the ability to switch the UART used for debugging, you will have to use [my fork (branch `devel-uart-sel`)](https://github.com/doragasu/esp-open-rtos/tree/devel-uart-sel).
+This firmware is based on [ESP8266_RTOS SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware.
 
-So first clone my `esp-open-rtos` repository fork, switch to branch `devel-uart-sel` and follow the instructions to install the complete toolchain. Make sure it is working (e.g. by building the provided examples). Then edit the following lines of the `Makefile'
+To burn the built firmware, edit the following line of the `Makefile`, and make sure it points to your installation of the mdma utility:
 ```
-MDMAP ?= $(HOME)/src/github/mw-mdma-cli/mdma -w
-
-include $(HOME)/src/esp8266/esp-open-rtos/common.mk
+MDMAP ?= $(HOME)/src/github/mw-mdma-cli/mdma
 ```
 
-To match the directories where you installed `esp-open-rtos `and `mw-mdma-cli` (optional, only if you want to flash the firmware using a MegaWiFi Programmer). Then cd to the path where the sources of this repository are located and simply run:
+The recommended way of burning the firmware to the ESP8266 embedded on a MegaWiFi cartridge is using a MegaWiFi Programmer along with `mw-mdma-cli` tool. If you installed `mw-mdma-cli` tool and edited the path as instructed above, you can burn the firmware just by connecting the cart and the programmer to a PC. The first time you burn the firmware, you have to write the bootloader, the partitions and the firmware blob itself:
 
 ```
-$ make
-```
-
-The recommended way of burning the firmware to the ESP8266 embedded on a MegaWiFi cartridge is using a MegaWiFi Programmer along with `mw-mdma-cli` tool. If you installed `mw-mdma-cli` tool and edited the path as instructed above, you can burn the firmware just by connecting the cart and the programmer and launching:
-```
+$ make boot
+$ make partitions
 $ make cart
 ```
 
+Then, when you need to update the firmware, you just need to run the last command (`make cart`).
+
 # Status
-This is work in progress. Right now only a very limited amount of commands are working. Please be patient, and if you have the will and the skills, contribute!
+
+This is work in progress. Currently most of the features I intended to implement are working. The most notable things I am still missing are SNTP support (that was working but broke when I migrated from esp-open-rtos to ESP8266_RTOS_SDK) and SSL support for HTTPS. But currently you can:
+
+* Configure and associate to access points (including neighbor scan functions).
+* Store up to 3 network configurations.
+* Store up to 3 gamertags.
+* Use TCP and UDP for transport.
+* Create both client and server sockets.
+* Perform HTTP requests.
+* Generate random numbers blazingly fast.
+* Store and read custom data on non volatile flash (up to 24 megabits are available in addition to the standard 32 megabits of the cart).
 
 # Authors
 This program has been written by doragasu.
