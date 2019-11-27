@@ -101,9 +101,9 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<(MW_CMD_GAMERTAG_SET - 32))   | (1<<(MW_CMD_GAMERTAG_GET - 32)) |
 	(1<<(MW_CMD_LOG - 32))            | (1<<(MW_CMD_FACTORY_RESET - 32))|
 	(1<<(MW_CMD_SLEEP - 32))          | (1<<(MW_CMD_HTTP_URL_SET - 32)) |
-	(1<<(MW_CMD_HTTP_METHOD_SET - 32))| (1<<(MW_CMD_HTTP_CERT_SET - 32))|
-	(1<<(MW_CMD_HTTP_HDR_ADD - 32))   | (1<<(MW_CMD_HTTP_HDR_DEL - 32)) |
-	(1<<(MW_CMD_HTTP_CLEANUP - 32))
+	(1<<(MW_CMD_HTTP_METHOD_SET - 32))| (1<<(MW_CMD_HTTP_CERT_QUERY - 32))|
+	(1<<(MW_CMD_HTTP_CERT_SET - 32))  | (1<<(MW_CMD_HTTP_HDR_ADD - 32)) |
+	(1<<(MW_CMD_HTTP_HDR_DEL - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32))
 };
 
 /// Commands allowed while in READY state
@@ -125,9 +125,10 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<(MW_CMD_GAMERTAG_SET - 32))  | (1<<(MW_CMD_GAMERTAG_GET - 32))   |
 	(1<<(MW_CMD_LOG - 32))           | (1<<(MW_CMD_SLEEP - 32))          |
 	(1<<(MW_CMD_HTTP_URL_SET - 32))  | (1<<(MW_CMD_HTTP_METHOD_SET - 32))|
-	(1<<(MW_CMD_HTTP_CERT_SET - 32)) | (1<<(MW_CMD_HTTP_HDR_ADD - 32))   |
-	(1<<(MW_CMD_HTTP_HDR_DEL - 32))  | (1<<(MW_CMD_HTTP_OPEN - 32))      |
-	(1<<(MW_CMD_HTTP_FINISH - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32))
+	(1<<(MW_CMD_HTTP_CERT_QUERY - 32))|(1<<(MW_CMD_HTTP_CERT_SET - 32))  |
+	(1<<(MW_CMD_HTTP_HDR_ADD - 32))  | (1<<(MW_CMD_HTTP_HDR_DEL - 32))   |
+	(1<<(MW_CMD_HTTP_OPEN - 32))     | (1<<(MW_CMD_HTTP_FINISH - 32))    |
+	(1<<(MW_CMD_HTTP_CLEANUP - 32))
 };
 
 /*
@@ -280,26 +281,6 @@ static void http_data_recv(void)
 	d.http.s = MW_HTTP_ST_IDLE;
 	LsdChDisable(MW_HTTP_CH);
 }
-
-//static esp_err_t http_event_cb(esp_http_client_event_t *evt)
-//{
-//
-//	switch(evt->event_id) {
-//	case HTTP_EVENT_ERROR:
-//		http_err_set("HTTP internal error");
-//		break;
-//
-//	case HTTP_EVENT_ON_DATA:
-//		http_data_recv_evt(evt);
-//		break;
-//
-//	default:
-//		// Nothing to do
-//		break;
-//	}
-//
-//	return ESP_OK;
-//}
 
 /// Prints a list of found scanned stations
 static void ap_print(const wifi_ap_record_t *ap, int n_aps) {
@@ -917,21 +898,23 @@ static void rand_fill(uint8_t *buf, uint16_t len)
 	}
 }
 
-static void http_parse_init(const char *url, http_event_handle_cb event_cb)
+static esp_http_client_handle_t http_parse_init(const char *url,
+		http_event_handle_cb event_cb)
 {
-	const char * cert = (const char*)MW_CERT_FLASH_ADDR;
+	const unsigned char * cert = (const unsigned char*)(MW_CERT_FLASH_ADDR +
+		sizeof(uint32_t));
 
-	if (!cert[0] || (-1 == cert[0])) {
+	if (!cert[0] || (0xFF == cert[0])) {
 		cert = NULL;
 	}
 
-	http_init(url, cert, event_cb);
+	return http_init(url, (const char*)cert, event_cb);
 }
 
 static void http_parse_url_set(const char *url, MwCmd *reply)
 {
 	if (!d.http.h) {
-		d.http.h = http_init(url, NULL, NULL);
+		d.http.h = http_parse_init(url, NULL);
 		LOGD("init, HTTP URL: %s", url);
 		return;
 	}
@@ -948,7 +931,7 @@ static void http_parse_url_set(const char *url, MwCmd *reply)
 static void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply)
 {
 	if (!d.http.h) {
-		d.http.h = http_init("", NULL, NULL);
+		d.http.h = http_parse_init("", NULL);
 	}
 
 	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
@@ -966,7 +949,7 @@ static void http_parse_header_add(const char *data, MwCmd *reply)
 	int n_items;
 
 	if (!d.http.h) {
-		d.http.h = http_init("", NULL, NULL);
+		d.http.h = http_parse_init("", NULL);
 	}
 
 	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s))) {
@@ -1076,7 +1059,8 @@ static void http_cert_flash_write(const char *data, uint16_t len)
 	// each time we write data)
 	to_write = MIN(d.http.remaining - written, len);
 	if (to_write) {
-		spi_flash_write(MW_CERT_FLASH_ADDR + written, data, to_write);
+		spi_flash_write(MW_CERT_FLASH_ADDR + sizeof(uint32_t) + written,
+				data, to_write);
 		written += to_write;
 	}
 
@@ -1089,14 +1073,57 @@ static void http_cert_flash_write(const char *data, uint16_t len)
 	}
 }
 
-static void http_parse_cert_set(uint16_t cert_len, MwCmd *reply)
+static int http_parse_cert_query(MwCmd *reply)
+{
+	uint32_t *cert = (uint32_t*)MW_CERT_FLASH_ADDR;
+	int replen = 0;
+
+	if (!*cert || 0xFFFFFFFF == *cert) {
+		replen = 0;
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		replen = 4;
+		reply->dwData[0] = htonl(*cert);
+	}
+
+	return replen;
+}
+
+static int http_cert_erase(void)
 {
 	int cert_sect = MW_CERT_FLASH_ADDR>>12;
 	int err = FALSE;
 
+	for (int i = 0; !err && i < (1 + ((MW_CERT_MAXLEN - 1) /
+					MW_FLASH_SECT_LEN)); i++) {
+		err = spi_flash_erase_sector(cert_sect + i) != ESP_OK;
+	}
+
+	return err;
+}
+
+static void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len,
+		MwCmd *reply)
+{
+	int err = FALSE;
+	uint32_t *installed = (uint32_t*)MW_CERT_FLASH_ADDR;
+
 	if (d.http.s != MW_HTTP_ST_IDLE && d.http.s != MW_HTTP_ST_ERROR) {
 		LOGE("not allowed in HTTP state %d", d.http.s);
 		goto err_out;
+	}
+	// Check if erase request
+	if (*installed != 0xFFFFFFFF && !cert_len) {
+		// Erase cert
+		err = http_cert_erase();
+		if (err) {
+			goto err_out;
+		} else {
+			goto ok_out;
+		}
+	}
+	if (x509_hash == *installed) {
+		LOGW("cert %08x is already installed", x509_hash);
 	}
 	if (cert_len > MW_CERT_MAXLEN) {
 		LOGE("cert is %d bytes, maximum allowed is "
@@ -1105,9 +1132,12 @@ static void http_parse_cert_set(uint16_t cert_len, MwCmd *reply)
 		goto err_out;
 	}
 	// Erase the required sectors (round up the division between sect len)
-	for (int i = 0; !err && i < (1 + ((MW_CERT_MAXLEN - 1) /
-					MW_FLASH_SECT_LEN)); i++) {
-		err = spi_flash_erase_sector(cert_sect + i) != ESP_OK;
+	err = http_cert_erase();
+	// Write certificate id
+	// TODO This should be done after writing the cert data!
+	if (!err) {
+		err = spi_flash_write(MW_CERT_FLASH_ADDR, &x509_hash,
+				sizeof(uint32_t));
 	}
 	if (err) {
 		LOGE("failed to erase certificate store");
@@ -1120,6 +1150,7 @@ static void http_parse_cert_set(uint16_t cert_len, MwCmd *reply)
 	d.http.s = MW_HTTP_ST_CERT_SET;
 	d.http.remaining = cert_len;
 
+ok_out:
 	// Everything OK
 	return;
 
@@ -1620,8 +1651,14 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
+		case MW_CMD_HTTP_CERT_QUERY:
+			replen = http_parse_cert_query(&reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
 		case MW_CMD_HTTP_CERT_SET:
-			http_parse_cert_set(ntohs(c->wData[0]), &reply);
+			http_parse_cert_set(ntohl(c->dwData[0]),
+					ntohs(c->dwData[2]), &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 

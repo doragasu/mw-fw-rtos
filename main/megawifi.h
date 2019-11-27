@@ -140,12 +140,13 @@
 #define MW_CMD_SLEEP			 38	///< Set the module to sleep mode
 #define MW_CMD_HTTP_URL_SET		 39	///< Set HTTP URL for request
 #define MW_CMD_HTTP_METHOD_SET		 40	///< Set HTTP request method
-#define MW_CMD_HTTP_CERT_SET		 41	///< Set HTTPS certificate
-#define MW_CMD_HTTP_HDR_ADD		 42	///< Add HTTP request header
-#define MW_CMD_HTTP_HDR_DEL		 43	///< Delete HTTP request header
-#define MW_CMD_HTTP_OPEN		 44	///< Open HTTP request
-#define MW_CMD_HTTP_FINISH		 45	///< Finish HTTP request
-#define MW_CMD_HTTP_CLEANUP		 46	///< Clean request data
+#define MW_CMD_HTTP_CERT_QUERY		 41	///< Query the X.509 hash of cert
+#define MW_CMD_HTTP_CERT_SET		 42	///< Set HTTPS certificate
+#define MW_CMD_HTTP_HDR_ADD		 43	///< Add HTTP request header
+#define MW_CMD_HTTP_HDR_DEL		 44	///< Delete HTTP request header
+#define MW_CMD_HTTP_OPEN		 45	///< Open HTTP request
+#define MW_CMD_HTTP_FINISH		 46	///< Finish HTTP request
+#define MW_CMD_HTTP_CLEANUP		 47	///< Clean request data
 #define MW_CMD_ERROR			255	///< Error command reply
 /** \} */
 
