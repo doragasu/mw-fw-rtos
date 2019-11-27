@@ -13,8 +13,7 @@ struct http_header {
 	struct list_head _head;
 };
 
-esp_http_client_handle_t http_init(const char *url, const char *cert_pem,
-		http_event_handle_cb event_cb)
+esp_http_client_handle_t http_init(const char *url, const char *cert_pem, http_event_handle_cb event_cb)
 {
 	esp_http_client_config_t config = {
 		.url = url,

@@ -917,6 +917,17 @@ static void rand_fill(uint8_t *buf, uint16_t len)
 	}
 }
 
+static void http_parse_init(const char *url, http_event_handle_cb event_cb)
+{
+	const char * cert = (const char*)MW_CERT_FLASH_ADDR;
+
+	if (!cert[0] || (-1 == cert[0])) {
+		cert = NULL;
+	}
+
+	http_init(url, cert, event_cb);
+}
+
 static void http_parse_url_set(const char *url, MwCmd *reply)
 {
 	if (!d.http.h) {
