@@ -81,7 +81,7 @@ void LsdInit(QueueHandle_t q) {
 	// Create semaphore used to handle receive buffers
 	d.sem = xSemaphoreCreateCounting(LSD_BUF_FRAMES, LSD_BUF_FRAMES);
 	// Create receive task
-	xTaskCreate(LsdRecvTsk, "LSDR", 512, q, LSD_RECV_PRIO, NULL);
+	xTaskCreate(LsdRecvTsk, "LSDR", 1024, q, LSD_RECV_PRIO, NULL);
 	// Configure UART
 	ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &lsd_uart));
 //	ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 1, 3, 15, 13));
@@ -270,7 +270,9 @@ void LsdRecvTsk(void *pvParameters) {
 						break;
 	
 					case LSD_ST_STX_WAIT:		// Wait for STX to arrive
-						if (LSD_STX_ETX == recv) d.rxs = LSD_ST_CH_LENH_RECV;
+						if (LSD_STX_ETX == recv) {
+							d.rxs = LSD_ST_CH_LENH_RECV;
+						}
 						break;
 	
 					case LSD_ST_CH_LENH_RECV:	// Receive CH and len high
@@ -281,7 +283,10 @@ void LsdRecvTsk(void *pvParameters) {
 							RXB.ch = recv>>4;
 							RXB.len = (recv & 0x0F)<<8;
 							// Sanity check (not exceding number of channels)
-							if (RXB.ch >= LSD_MAX_CH) d.rxs = LSD_ST_STX_WAIT;
+							if (RXB.ch >= LSD_MAX_CH) {
+								d.rxs = LSD_ST_STX_WAIT;
+								LOGE("invalid channel %" PRIu8, RXB.ch);
+							}
 							// Check channel is enabled
 							else if (d.en[RXB.ch]) {
 								d.rxs = LSD_ST_LEN_RECV;

@@ -48,6 +48,17 @@
 #include "led.h"
 #include "http.h"
 
+#define SPI_FLASH_BASE	0x40200000
+#define SPI_FLASH_ADDR(flash_addr)	(SPI_FLASH_BASE + (flash_addr))
+
+#define HTTP_CERT_HASH_ADDR	SPI_FLASH_ADDR(MW_CERT_FLASH_ADDR)
+
+#define HTTP_CERT_LEN_ADDR	SPI_FLASH_ADDR(MW_CERT_FLASH_ADDR + \
+		sizeof(uint32_t))
+
+#define HTTP_CERT_ADDR		SPI_FLASH_ADDR(MW_CERT_FLASH_ADDR + \
+		(2 * sizeof(uint32_t)))
+
 /// Flash sector number where the configuration is stored
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
@@ -901,21 +912,26 @@ static void rand_fill(uint8_t *buf, uint16_t len)
 static esp_http_client_handle_t http_parse_init(const char *url,
 		http_event_handle_cb event_cb)
 {
-	const unsigned char * cert = (const unsigned char*)(MW_CERT_FLASH_ADDR +
-		sizeof(uint32_t));
+	uint32_t cert_len = *((uint32_t*)HTTP_CERT_LEN_ADDR);
+	const char *cert = (const char*)HTTP_CERT_ADDR;
 
-	if (!cert[0] || (0xFF == cert[0])) {
+
+	if (!cert_len || cert_len > MW_CERT_MAXLEN || !cert[0] ||
+			0xFF == cert[0]) {
+		LOGW("no valid certificate found, len %" PRIu32 ", start: %d",
+				cert_len, cert[0]);
 		cert = NULL;
 	}
 
-	return http_init(url, (const char*)cert, event_cb);
+	return http_init(url, cert, event_cb);
 }
 
 static void http_parse_url_set(const char *url, MwCmd *reply)
 {
+	LOGD("set url %s", url);
 	if (!d.http.h) {
-		d.http.h = http_parse_init(url, NULL);
 		LOGD("init, HTTP URL: %s", url);
+		d.http.h = http_parse_init(url, NULL);
 		return;
 	}
 
@@ -930,6 +946,7 @@ static void http_parse_url_set(const char *url, MwCmd *reply)
 
 static void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply)
 {
+	LOGD("set method %d", method);
 	if (!d.http.h) {
 		d.http.h = http_parse_init("", NULL);
 	}
@@ -982,6 +999,7 @@ static void http_parse_header_del(const char *key, MwCmd *reply)
 
 static void http_parse_open(uint32_t write_len, MwCmd *reply)
 {
+	LOGD("opening ");
 	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
 			http_open(d.http.h, write_len)) {
 		LOGE("HTTP open failed");
@@ -1048,19 +1066,28 @@ static void http_cert_flash_write(const char *data, uint16_t len)
 {
 	static uint16_t written;
 	uint16_t to_write;
+	esp_err_t err;
 
 	// Special condition: if no data payload, reset written counter
 	if (!data && !len) {
+		LOGD("reset data counter");
 		written = 0;
 		return;
 	}
 
+	LOGD("write %" PRIu16 " cert bytes", len);
 	// Note we are using d.http.remaining as total (it is not decremented
 	// each time we write data)
 	to_write = MIN(d.http.remaining - written, len);
 	if (to_write) {
-		spi_flash_write(MW_CERT_FLASH_ADDR + sizeof(uint32_t) + written,
-				data, to_write);
+		err = spi_flash_write(MW_CERT_FLASH_ADDR + 2 * sizeof(uint32_t)
+				+ written, data, to_write);
+		if (err) {
+			LOGE("flash write failed");
+			d.http.s = MW_HTTP_ST_IDLE;
+			LsdChDisable(MW_HTTP_CH);
+			return;
+		}
 		written += to_write;
 	}
 
@@ -1070,20 +1097,22 @@ static void http_cert_flash_write(const char *data, uint16_t len)
 		if (to_write < len) {
 			LOGW("ignoring %d certificate bytes", len - to_write);
 		}
+		LsdChDisable(MW_HTTP_CH);
 	}
 }
 
 static int http_parse_cert_query(MwCmd *reply)
 {
-	uint32_t *cert = (uint32_t*)MW_CERT_FLASH_ADDR;
+	uint32_t cert = *((uint32_t*)HTTP_CERT_HASH_ADDR);
 	int replen = 0;
 
-	if (!*cert || 0xFFFFFFFF == *cert) {
+	LOGD("cert hash: %08x", cert);
+	if (0xFFFFFFFF == cert) {
 		replen = 0;
 		reply->cmd = htons(MW_CMD_ERROR);
 	} else {
 		replen = 4;
-		reply->dwData[0] = htonl(*cert);
+		reply->dwData[0] = htonl(cert);
 	}
 
 	return replen;
@@ -1106,14 +1135,15 @@ static void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len,
 		MwCmd *reply)
 {
 	int err = FALSE;
-	uint32_t *installed = (uint32_t*)MW_CERT_FLASH_ADDR;
+	uint32_t installed = *(uint32_t*)HTTP_CERT_ADDR;
 
 	if (d.http.s != MW_HTTP_ST_IDLE && d.http.s != MW_HTTP_ST_ERROR) {
 		LOGE("not allowed in HTTP state %d", d.http.s);
 		goto err_out;
 	}
 	// Check if erase request
-	if (*installed != 0xFFFFFFFF && !cert_len) {
+	if (installed != 0xFFFFFFFF && !cert_len) {
+		LOGD("erasing cert as per request");
 		// Erase cert
 		err = http_cert_erase();
 		if (err) {
@@ -1122,30 +1152,36 @@ static void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len,
 			goto ok_out;
 		}
 	}
-	if (x509_hash == *installed) {
+	if (x509_hash == installed) {
 		LOGW("cert %08x is already installed", x509_hash);
 	}
 	if (cert_len > MW_CERT_MAXLEN) {
 		LOGE("cert is %d bytes, maximum allowed is "
-				STR(MW_HTTP_ST_CERT_SET) " bytes",
+				STR(MW_CERT_MAXLEN) " bytes",
 				cert_len);
 		goto err_out;
 	}
 	// Erase the required sectors (round up the division between sect len)
+	LOGD("erasing previous cert");
 	err = http_cert_erase();
 	// Write certificate id
 	// TODO This should be done after writing the cert data!
 	if (!err) {
+		uint32_t dw_len = cert_len;
+		LOGD("write cert hash %08x, len %" PRIu32, x509_hash, dw_len);
 		err = spi_flash_write(MW_CERT_FLASH_ADDR, &x509_hash,
 				sizeof(uint32_t));
+		err = spi_flash_write(MW_CERT_FLASH_ADDR + sizeof(uint32_t),
+				&dw_len, sizeof(uint32_t));
 	}
 	if (err) {
 		LOGE("failed to erase certificate store");
 		goto err_out;
 	}
 
-	LOGI("waiting certificate data (%d bytes)", cert_len);
+	LOGI("waiting certificate data");
 	// Reset written data counter
+	LsdChEnable(MW_HTTP_CH);
 	http_cert_flash_write(NULL, 0);
 	d.http.s = MW_HTTP_ST_CERT_SET;
 	d.http.remaining = cert_len;
@@ -1658,7 +1694,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_HTTP_CERT_SET:
 			http_parse_cert_set(ntohl(c->dwData[0]),
-					ntohs(c->dwData[2]), &reply);
+					ntohs(c->wData[2]), &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -1713,6 +1749,7 @@ static void MwHttpWrite(const char *data, uint16_t len)
 {
 	uint16_t to_write;
 
+	LOGD("HTTP data %" PRIu16 " bytes", len);
 	// Writes should only be performed by client during the
 	// OPEN_CONTENT_WAIT or CERT_SET states
 	switch (d.http.s) {

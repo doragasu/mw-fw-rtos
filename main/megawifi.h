@@ -47,8 +47,7 @@
 #define MW_SNTP_SERV_2		"2.pool.ntp.org"
 
 /// Stack size (in elements) for FSM task
-//#define MW_FSM_STACK_LEN	1024
-#define MW_FSM_STACK_LEN	4096
+#define MW_FSM_STACK_LEN	8192
 
 /// Stack size (in elements) for SOCK task
 #define MW_SOCK_STACK_LEN	1024
@@ -58,8 +57,9 @@
 /// Channel used for HTTP requests and cert sets
 #define MW_HTTP_CH			LSD_MAX_CH - 1
 
-/// Priority for the FSM task
-#define MW_FSM_PRIO			1
+/// Priority for the FSM task, higher than the reception tasks, to make sure
+/// we do not receive data if there is data pending processing
+#define MW_FSM_PRIO		3
 
 /// Priority for the SOCK task
 #define MW_SOCK_PRIO		2
@@ -70,9 +70,9 @@
 /** \addtogroup MwApi RetCodes Return values for functions of this module.
  *  \{ */
 /// Operation completed successfully
-#define MW_OK				0
+#define MW_OK			0
 /// Generic error code
-#define MW_ERROR			-1
+#define MW_ERROR		-1
 /// Command format error
 #define MW_CMD_FMT_ERROR	-2
 /// Unknown command code
@@ -92,10 +92,10 @@
 #define MW_CFG_FLASH_ADDR	(MW_FLASH_USER_BASE_ADDR - (MW_FLASH_SECT_LEN))
 
 /// Maximum length of a certificate in bytes
-#define MW_CERT_MAXLEN		(8 * 1024)
+#define MW_CERT_MAXLEN		(8 * 1024 - 2 * sizeof(uint32_t))
 /// Certificate base address, stored on the 8 KiB preceding
 /// the configuration sector (0xFD000)
-#define MW_CERT_FLASH_ADDR	(MW_CFG_FLASH_ADDR - MW_CERT_MAXLEN)
+#define MW_CERT_FLASH_ADDR	(MW_CFG_FLASH_ADDR - 8 * 1024)
 
 /** \addtogroup MwApi Cmds Supported commands.
  *  \{ */
