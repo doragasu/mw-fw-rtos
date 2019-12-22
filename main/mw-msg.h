@@ -29,6 +29,8 @@
 #define MW_GT_AVATAR_WIDTH		32
 /// Gamertag avatar graphick height in pixels
 #define MW_GT_AVATAR_HEIGHT		48
+/// Telegram token maximum length
+#define MW_GT_TG_TOKEN_MAX		64
 
 /** \addtogroup MwApi MwEvent Events parsed by the system FSM.
  *  \{ */
@@ -98,14 +100,6 @@ typedef struct {
 	ip_addr_t dns2;
 } MwMsgIpCfg;
 
-/// SNTP and timezone configuration
-typedef struct {
-	uint16_t upDelay;
-	int8_t tz;
-	uint8_t dst;
-	char servers[MW_CMD_MAX_BUFLEN - 4];
-} MwMsgSntpCfg;
-
 /// Date and time message
 typedef struct {
 	uint32_t dtBin[2];
@@ -138,6 +132,8 @@ struct mw_gamertag {
 	char security[MW_GT_SECURITY_MAX];
 	/// User defined text tag
 	char tagline[MW_GT_TAGLINE_MAX];
+	/// Telegram token
+	char tg_token[MW_GT_TG_TOKEN_MAX];
 	/// Avatar image tiles
 	uint8_t avatar_tiles[MW_GT_AVATAR_WIDTH * MW_GT_AVATAR_HEIGHT / 2];
 	/// Avatar image palette
@@ -223,7 +219,6 @@ typedef struct {
 		MwMsgInAddr inAddr;
 		MwMsgApCfg apCfg;
 		MwMsgIpCfg ipCfg;
-		MwMsgSntpCfg sntpCfg;
 		MwMsgDateTime datetime;
 		MwMsgFlashData flData;
 		MwMsgFlashRange flRange;

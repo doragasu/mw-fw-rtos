@@ -3,8 +3,6 @@
  *
  * \Author Jesus Alonso (idoragasu)
  * \date   2016
- * \warning BUG: Sending data using LsdSend() function has not yet been
- * serialized!!!
  ****************************************************************************/
 
 // Newlib
@@ -25,6 +23,7 @@
 #include <lwip/netdb.h>
 #include <lwip/dns.h>
 #include <lwip/ip_addr.h>
+#include <lwip/apps/sntp.h>
 
 // mbedtls
 #include <mbedtls/md5.h>
@@ -158,19 +157,14 @@ typedef struct {
 	tcpip_adapter_ip_info_t ip[MW_NUM_AP_CFGS];
 	/// DNS configuration (when not using DHCP). 2 servers per AP config.
 	ip_addr_t dns[MW_NUM_AP_CFGS][MW_NUM_DNS_SERVERS];
-	/// NTP update delay (in seconds, greater than 15)
-	uint16_t ntpUpDelay;
 	/// Pool length for SNTP configuration
 	uint16_t ntpPoolLen;
-	/// Pool for SNTP configuration, up to 3 servers concatenaded and NULL
-	/// separated. Two NULL characters mark end of pool.
+	/// SNTP configuration. The TZ string and up to 3 servers are
+	/// concatenated and null separated. Two NULL characters mark
+	/// the end of the pool
 	char ntpPool[MW_NTP_POOL_MAXLEN];
 	/// Index of the configuration used on last connection (-1 for none).
 	char defaultAp;
-	/// Timezone to use with SNTP.
-	int8_t timezone;
-	/// One DST hour will be applied if set to 1
-	uint8_t dst;
 	/// Gamertag
 	struct mw_gamertag gamertag[MW_NUM_GAMERTAGS];
 	/// Checksum
@@ -639,12 +633,12 @@ static int MwCmdInList(uint8_t cmd, const uint32_t list[2]) {
 static void MwSetDefaultCfg(void) {
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.defaultAp = -1;
-	// Copy the 3 default NTP servers
-	*(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(cfg.ntpPool, MW_SNTP_SERV_0),
-		MW_SNTP_SERV_1), MW_SNTP_SERV_2)) = '\0';
-	cfg.ntpPoolLen = sizeof(MW_SNTP_SERV_0) + sizeof(MW_SNTP_SERV_1) +
-		sizeof(MW_SNTP_SERV_2) + 1;
-	cfg.ntpUpDelay = 300;	// Update each 5 minutes
+	// Copy the default timezone and NTP servers
+	*(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(cfg.ntpPool,
+		MW_TZ_DEF), MW_SNTP_SERV_0), MW_SNTP_SERV_1), MW_SNTP_SERV_2)) =
+		'\0';
+	cfg.ntpPoolLen = sizeof(MW_TZ_DEF) + sizeof(MW_SNTP_SERV_0) +
+		sizeof(MW_SNTP_SERV_1) + sizeof(MW_SNTP_SERV_2) + 1;
 	// NOTE: Checksum is only computed before storing configuration
 }
 
@@ -754,19 +748,64 @@ void MwSysStatFill(MwCmd *rep) {
 	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags, sizeof(MwMsgSysStat));
 }
 
+static int tokens_get(const char *in, const char *token[],
+		int token_max, uint16_t *len_total)
+{
+	int i;
+	size_t len;
+
+	token[0] = in;
+	for (i = 0; i < (token_max - 1) && *token[i]; i++) {
+		len = strlen(token[i]);
+		token[i + 1] = token[i] + len + 1;
+	}
+
+	if (*token[i]) {
+		i++;
+	}
+
+	if (len_total) {
+		// ending address minus initial address plus an extra null
+		// termination plus 1 (because if something uses bytes from
+		// x pos to y pos, length is (x - y + 1).
+		// note: this assumes that last token always has an extra
+		// null termination.
+		*len_total = ((token[i - 1] + strlen(token[i - 1]) + 2) - in);
+	}
+
+	return i;
+}
+
+static void sntp_set_config(void)
+{
+	const char *token[4];
+	int num_tokens;
+
+	num_tokens = tokens_get(cfg.ntpPool, token, 4, NULL);
+
+	setenv("TZ", token[0], 1);
+	tzset();
+
+	for (int i = 1; i < num_tokens; i++) {
+		sntp_setservername(i - 1, (char*)token[i]);
+		LOGI("SNTP server: %s", token[i]);
+	}
+}
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/
 int MwInit(void) {
 	MwFsmMsg m;
-//	struct timezone tz;
-	char *sntpSrv[SNTP_MAX_SERVERS];
-	size_t sntpLen = 0;
 	int i;
 	uint8_t tmp;
 	esp_err_t err;
 	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
+	if (sizeof(MwNvCfg) > MW_FLASH_SECT_LEN) {
+		LOGE("STOP: config length too big (%zd)", sizeof(MwNvCfg));
+		deep_sleep();
+	}
 	LOGI("Configured SPI length: %zd", spi_flash_get_chip_size());
 	// Load configuration from flash
 	MwCfgLoad();
@@ -819,25 +858,9 @@ int MwInit(void) {
 	}
 	// Initialize SNTP
 	// TODO: Maybe this should be moved to the "READY" state
-	for (i = 0, sntpSrv[0] = cfg.ntpPool; (i < SNTP_MAX_SERVERS) &&
-			((sntpLen = strlen(sntpSrv[i])) > 0); i++) {
-			sntpSrv[i + 1] = sntpSrv[i] + sntpLen + 1;
-			LOGI("SNTP server: %s", sntpSrv[i]);
-	}
-	// FIXME: SNTP not supported on ESP8266_RTOS_SDK
-//	if (i) {
-//		LOGI("%d SNTP servers found.", i);
-//		tz.tz_minuteswest = cfg.timezone * 60;
-//		tz.tz_dsttime = cfg.dst;
-//		tz.tz_minuteswest = 0;
-//		sntp_initialize(&tz);
-//		LOGI("Setting update delay to %d seconds.", cfg.ntpUpDelay);
-//		sntp_set_update_delay(cfg.ntpUpDelay * 1000);
-//		if (sntp_set_servers(sntpSrv, i)) {
-//			LOGI("Error setting SNTP servers!");
-//			return;
-//		}
-//	} else LOGE("No NTP servers found!");
+	sntp_setoperatingmode(SNTP_OPMODE_POLL);
+	sntp_set_config();
+	sntp_init();
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(d.q);
 	LsdChEnable(MW_CTRL_CH);
@@ -855,16 +878,6 @@ int MwInit(void) {
 err:
 	LOGE("fatal error during initialization");
 	return 1;
-}
-
-static int MwSntpCfgGet(MwMsgSntpCfg *sntp) {
-	sntp->dst = cfg.dst;
-	sntp->tz = cfg.timezone;
-	sntp->upDelay = ByteSwapWord(cfg.ntpUpDelay);
-	memcpy(sntp->servers, cfg.ntpPool, cfg.ntpPoolLen);
-
-	return sizeof(sntp->dst) + sizeof(sntp->tz) + sizeof(sntp->upDelay) +
-		cfg.ntpPoolLen;
 }
 
 static void log_ip_cfg(MwMsgIpCfg *ip)
@@ -1194,6 +1207,45 @@ err_out:
 	reply->cmd = htons(MW_CMD_ERROR);
 }
 
+
+static void sntp_config_set(const char *data, uint16_t len, MwCmd *reply)
+{
+	// We should have from 2 to 4 null terminated strings. First one
+	// is the TZ string. Remaining ones are SNTP server names.
+	const char *token[4];
+	int num_tokens;
+	uint16_t len_total;
+
+	num_tokens = tokens_get(data, token, 4, &len_total);
+	if (num_tokens < 2) {
+		goto err_out;
+	}
+
+	if (len_total != len || len_total > MW_NTP_POOL_MAXLEN) {
+		goto err_out;
+	}
+
+	// TZ string must be at least 4 bytes long (including null term)
+	if ((token[1] - token[0]) < 4) {
+		goto err_out;
+	}
+
+	memcpy(cfg.ntpPool, data, len);
+	memset(cfg.ntpPool + len, 0, MW_NTP_POOL_MAXLEN - len);
+	cfg.ntpPoolLen = len;
+	if (MwNvCfgSave() < 0) {
+		goto err_out;
+	}
+
+	sntp_set_config();
+
+	return;
+
+err_out:
+	LOGE("SNTP configuration failed");
+	reply->cmd = htons(MW_CMD_ERROR);
+}
+
 /// Process command requests (coming from the serial line)
 int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
@@ -1447,33 +1499,23 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_SNTP_CFG:
-			cfg.ntpPoolLen = len - 4;
-			if ((cfg.ntpPoolLen > MW_NTP_POOL_MAXLEN) ||
-					(c->sntpCfg.tz < -11) || (c->sntpCfg.tz > 13)) {
-				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			} else {
-				cfg.ntpUpDelay = ByteSwapWord(c->sntpCfg.upDelay);
-				cfg.timezone = c->sntpCfg.tz;
-				cfg.dst = c->sntpCfg.dst;
-				memcpy(cfg.ntpPool, c->sntpCfg.servers, cfg.ntpPoolLen);
-				if (MwNvCfgSave() < 0) {
-					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				}
-			}
+			LOGI("setting SNTP cfg for zone %s", c->data);
+			sntp_config_set((char*)c->data, len, &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_SNTP_CFG_GET:
-			replen = MwSntpCfgGet(&reply.sntpCfg);
-			reply.datalen = ByteSwapWord(replen);
-			LOGI("sending configuration (%d bytes)", replen);
+			replen = cfg.ntpPoolLen;
+			LOGI("sending SNTP cfg (%d bytes)", replen);
+			memcpy(reply.data, cfg.ntpPool, replen);
+			reply.datalen = htons(replen);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_DATETIME:
-			reply.datetime.dtBin[0] = 0;
-			reply.datetime.dtBin[1] = ByteSwapDWord(ts);
 			ts = time(NULL);
+			reply.datetime.dtBin[0] = 0;
+			reply.datetime.dtBin[1] = ByteSwapDWord((uint32_t)ts);
 			strcpy(reply.datetime.dtStr, ctime(&ts));
 			LOGI("sending datetime %s", reply.datetime.dtStr);
 			tmp = 2*sizeof(uint32_t) + strlen(reply.datetime.dtStr);
@@ -1550,9 +1592,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LOGW("FLASH_ID unsupported on ESP8266_RTOS_SDK");
 			reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
-//			reply.datalen = ByteSwapWord(sizeof(uint32_t));
-//			reply.flId = sdk_spi_flash_get_id();
-//			LsdSend((uint8_t*)&reply, sizeof(uint32_t) + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_SYS_STAT:

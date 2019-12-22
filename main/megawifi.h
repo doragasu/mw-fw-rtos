@@ -11,14 +11,14 @@
 #include "mw-msg.h"
 
 /// Major firmware version
-#define MW_FW_VERSION_MAJOR	0
+#define MW_FW_VERSION_MAJOR	1
 /// Minor firmware version
-#define MW_FW_VERSION_MINOR	7
+#define MW_FW_VERSION_MINOR	0
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 
-/// Maximum length of an NTP pool URI (including '\0').
-#define MW_NTP_POOL_MAXLEN	80
+/// Maximum length of an NTP pool (TZ string + up to 3 servers)
+#define MW_NTP_POOL_MAXLEN	(64 + 80)
 /// Number of AP configurations stored to nvflash.
 #define MW_NUM_AP_CFGS		3
 /// Number of DSN servers supported per AP configuration.
@@ -37,8 +37,11 @@
 #define MW_CFG_FLASH_SEQ	((FLASH_LENGTH>>12)-3)
 
 /// Maximum number of supported SNTP servers
-#define SNTP_MAX_SERVERS	3
+/// \todo Set this properly
+//#define SNTP_MAX_SERVERS	3
 
+/// Default timezone
+#define MW_TZ_DEF		"GMT"
 /// Default NTP server 0
 #define MW_SNTP_SERV_0		"0.pool.ntp.org"
 /// Default NTP server 1

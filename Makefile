@@ -19,7 +19,7 @@ boot:
 	@$(MDMAP) -w $(BOOT_BIN)
 
 blank_cfg: ones4k.bin
-	@$(MDMAP) -w $<:0x7F000
+	@$(MDMAP) -w $<:0xFF000
 
 partitions:
 	@$(MDMAP) -w $(PART_BIN):0x8000
