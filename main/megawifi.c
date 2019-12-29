@@ -93,6 +93,8 @@ struct http_data {
 	enum http_stat s;
 	/// Remaining bytes to read/write
 	int remaining;
+	/// Certificate x509 hash, used during CERT_SET
+	uint32_t hash_tmp;
 };
 
 /// Commands allowed while in IDLE state
@@ -1105,8 +1107,11 @@ static void http_cert_flash_write(const char *data, uint16_t len)
 	}
 
 	if (written >= d.http.remaining) {
+		// Write certificate hash
+		spi_flash_write(MW_CERT_FLASH_ADDR, &d.http.hash_tmp,
+				sizeof(uint32_t));
 		d.http.s = MW_HTTP_ST_IDLE;
-		LOGI("certificate stored");
+		LOGI("certificate %" PRIu32 " stored", d.http.hash_tmp);
 		if (to_write < len) {
 			LOGW("ignoring %d certificate bytes", len - to_write);
 		}
@@ -1177,15 +1182,13 @@ static void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len,
 	// Erase the required sectors (round up the division between sect len)
 	LOGD("erasing previous cert");
 	err = http_cert_erase();
-	// Write certificate id
-	// TODO This should be done after writing the cert data!
 	if (!err) {
+		// Write certificate length, and store for later the hash
 		uint32_t dw_len = cert_len;
 		LOGD("write cert hash %08x, len %" PRIu32, x509_hash, dw_len);
-		err = spi_flash_write(MW_CERT_FLASH_ADDR, &x509_hash,
-				sizeof(uint32_t));
 		err = spi_flash_write(MW_CERT_FLASH_ADDR + sizeof(uint32_t),
 				&dw_len, sizeof(uint32_t));
+		d.http.hash_tmp = x509_hash;
 	}
 	if (err) {
 		LOGE("failed to erase certificate store");
