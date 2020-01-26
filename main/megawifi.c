@@ -47,6 +47,7 @@
 #include "led.h"
 #include "http.h"
 
+#define MW_SERVER_DEFAULT		"doragasu.com"
 #define SPI_FLASH_BASE	0x40200000
 #define SPI_FLASH_ADDR(flash_addr)	(SPI_FLASH_BASE + (flash_addr))
 
@@ -115,7 +116,8 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<(MW_CMD_SLEEP - 32))          | (1<<(MW_CMD_HTTP_URL_SET - 32)) |
 	(1<<(MW_CMD_HTTP_METHOD_SET - 32))| (1<<(MW_CMD_HTTP_CERT_QUERY - 32))|
 	(1<<(MW_CMD_HTTP_CERT_SET - 32))  | (1<<(MW_CMD_HTTP_HDR_ADD - 32)) |
-	(1<<(MW_CMD_HTTP_HDR_DEL - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32))
+	(1<<(MW_CMD_HTTP_HDR_DEL - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32)) |
+	(1<<(MW_CMD_SERVER_URL_GET - 32)) | (1<<(MW_CMD_SERVER_URL_SET - 32))
 };
 
 /// Commands allowed while in READY state
@@ -140,7 +142,8 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_CERT_QUERY - 32))|(1<<(MW_CMD_HTTP_CERT_SET - 32))  |
 	(1<<(MW_CMD_HTTP_HDR_ADD - 32))  | (1<<(MW_CMD_HTTP_HDR_DEL - 32))   |
 	(1<<(MW_CMD_HTTP_OPEN - 32))     | (1<<(MW_CMD_HTTP_FINISH - 32))    |
-	(1<<(MW_CMD_HTTP_CLEANUP - 32))
+	(1<<(MW_CMD_HTTP_CLEANUP - 32))  | (1<<(MW_CMD_SERVER_URL_GET - 32)) |
+	(1<<(MW_CMD_SERVER_URL_SET - 32))
 };
 
 /*
@@ -169,6 +172,8 @@ typedef struct {
 	char defaultAp;
 	/// Gamertag
 	struct mw_gamertag gamertag[MW_NUM_GAMERTAGS];
+	/// URL of the main server
+	char serverUrl[MW_SERVER_DEFAULT_MAXLEN];
 	/// Checksum
 	uint8_t md5[16];
 } MwNvCfg;
@@ -641,6 +646,7 @@ static void MwSetDefaultCfg(void) {
 		'\0';
 	cfg.ntpPoolLen = sizeof(MW_TZ_DEF) + sizeof(MW_SNTP_SERV_0) +
 		sizeof(MW_SNTP_SERV_1) + sizeof(MW_SNTP_SERV_2) + 1;
+	strcpy(cfg.serverUrl, MW_SERVER_DEFAULT);
 	// NOTE: Checksum is only computed before storing configuration
 }
 
@@ -1249,6 +1255,31 @@ err_out:
 	reply->cmd = htons(MW_CMD_ERROR);
 }
 
+static int parse_server_url_get(MwCmd *reply)
+{
+	int len = 1 + strlen(cfg.serverUrl);
+	memcpy(reply->data, cfg.serverUrl, len);
+	reply->datalen = htons(len);
+
+	return len;
+}
+
+static void parse_server_url_set(const char *url, MwCmd *reply)
+{
+	size_t len = 1 + strlen(url);
+
+	if (len > MW_SERVER_DEFAULT_MAXLEN) {
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		memcpy(cfg.serverUrl, url, len);
+		if (MwNvCfgSave() < 0) {
+			reply->cmd = htons(MW_CMD_ERROR);
+		} else {
+			reply->datalen = htons(len);
+		}
+	}
+}
+
 /// Process command requests (coming from the serial line)
 int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
@@ -1737,6 +1768,16 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_HTTP_CERT_SET:
 			http_parse_cert_set(ntohl(c->dwData[0]),
 					ntohs(c->wData[2]), &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_SERVER_URL_GET:
+			replen = parse_server_url_get(&reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
+		case MW_CMD_SERVER_URL_SET:
+			parse_server_url_set((char*)c->data, &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 

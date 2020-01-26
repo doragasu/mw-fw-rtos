@@ -28,7 +28,9 @@
 /// Length of the FSM queue
 #define MW_FSM_QUEUE_LEN	8
 /// Maximum number of simultaneous TCP connections
-#define MW_MAX_SOCK			2
+#define MW_MAX_SOCK		2
+/// Maximum length of the default server
+#define MW_SERVER_DEFAULT_MAXLEN	64
 
 /// Length of the flash chip (4 megabytes for the ESP-12 modules.
 #define FLASH_LENGTH		(4*1024*1024)
@@ -150,6 +152,8 @@
 #define MW_CMD_HTTP_OPEN		 45	///< Open HTTP request
 #define MW_CMD_HTTP_FINISH		 46	///< Finish HTTP request
 #define MW_CMD_HTTP_CLEANUP		 47	///< Clean request data
+#define MW_CMD_SERVER_URL_GET		 48	///< Get the main server URL
+#define MW_CMD_SERVER_URL_SET		 49	///< Set the main server URL
 #define MW_CMD_ERROR			255	///< Error command reply
 /** \} */
 
