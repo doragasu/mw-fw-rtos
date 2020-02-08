@@ -34,9 +34,6 @@
 
 /// Length of the flash chip (4 megabytes for the ESP-12 modules.
 #define FLASH_LENGTH		(4*1024*1024)
-/// Start of the system configuration area (the last three 4 KiB sectors of
-/// the flash, 0x3FD for a 4 MiB flash chip).
-#define MW_CFG_FLASH_SEQ	((FLASH_LENGTH>>12)-3)
 
 /// Maximum number of supported SNTP servers
 /// \todo Set this properly
