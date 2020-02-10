@@ -1,0 +1,17 @@
+diff --git a/components/lwip/port/esp8266/include/lwipopts.h b/components/lwip/port/esp8266/include/lwipopts.h
+index 30ffdf31..d09558fa 100644
+--- a/components/lwip/port/esp8266/include/lwipopts.h
++++ b/components/lwip/port/esp8266/include/lwipopts.h
+@@ -781,10 +781,10 @@ size_t memp_malloc_get_size(size_t type);
+ 
+ #include <sys/time.h>
+ 
++extern void megawifi_set_time(uint32_t sec, uint32_t us);
+ #define SNTP_SET_SYSTEM_TIME_US(sec, us)  \
+     do { \
+-        struct timeval tv = { .tv_sec = sec, .tv_usec = us }; \
+-        settimeofday(&tv, NULL); \
++		megawifi_set_time(sec, us); \
+     } while (0);
+ 
+ /*

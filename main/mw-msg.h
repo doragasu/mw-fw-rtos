@@ -48,7 +48,7 @@ typedef enum {
 	MW_EV_UDP_RECV,		///< Data received from UDP connection.
 	MW_EV_CON_DISC,		///< TCP disconnection.
 	MW_EV_CON_ERR,		///< TCP connection error.
-	MW_EV_MAX			///< Number of total events.
+	MW_EV_MAX		///< Number of total events.
 } MwEvent;
 /** \} */
 
@@ -77,12 +77,6 @@ typedef struct {
 	uint8_t channel;
 	char data[MW_CMD_MAX_BUFLEN - 6 - 6 - 1];
 } MwMsgInAddr;
-
-//typedef struct {
-//	uint32_t reserved;
-//	uint16_t port;
-//	uint8_t ch;
-//} MwMsgBind;
 
 /// AP configuration message
 typedef struct {
@@ -162,28 +156,16 @@ typedef enum {
 typedef union {
 	uint32_t st_flags;
 	struct {
-		MwState sys_stat:8;		///< System status
-		uint8_t online:1;		///< Module is connected to the Internet
-		uint8_t cfg_ok:1;		///< Configuration OK
-		uint8_t dt_ok:1;		///< Date and time synchronized at least once
-		uint8_t cfg:2;		///< Date and time synchronized at least once
+		MwState sys_stat:8;	///< System status
+		uint8_t online:1;	///< Module is connected to the Internet
+		uint8_t cfg_ok:1;	///< Configuration OK
+		uint8_t dt_ok:1;	///< Date and time synchronized at least once
+		uint8_t cfg:2;		///< Default network configuration
 		uint16_t reserved:3;	///< Reserved flags
-		uint16_t ch_ev:16;		///< Channel flags with the pending event
+		uint16_t ch_ev:16;	///< Channel flags with the pending event
 	};
 } MwMsgSysStat;
 /** \} */
-
-///** \addtogroup MwApi MwSysStat System status
-// *  \{ */
-//typedef struct {
-//	MwState sys_stat:8;		///< System status
-//	uint8_t pending:1;		///< Another event is pending
-//	uint8_t online:1;		///< Module is connected to the Internet
-//	uint8_t dt_ok:1;		///< Date and time synchronized at least once
-//	uint8_t cfg_ok:1;		///< Configuration OK
-//	uint8_t ch_ev:1;		///< Channel event available
-//	uint8_t ch:4;			///< Channel with the pending event
-//} MwSysStat;
 
 enum mw_http_req_type {
 		MW_HTTP_NONE = 0,

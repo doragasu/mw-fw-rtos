@@ -2,8 +2,8 @@
 #include "util.h"
 #include "megawifi.h"
 
-
-void app_main(void) {
+void app_main(void)
+{
 	// UART2 is used for logging.
 	LOGI("=== MeGaWiFi firmware version %d.%d-%s ===",
 			MW_FW_VERSION_MAJOR, MW_FW_VERSION_MINOR, MW_FW_VARIANT);

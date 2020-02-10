@@ -222,6 +222,17 @@ static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
 
+/// Sets the time. Called by the lwip SNTP module.
+/// \note For this to work, edit lwipopts.h, and point
+/// SNTP_SET_SYSTEM_TIME_US to this function.
+void megawifi_set_time(uint32_t sec, uint32_t us)
+{
+        struct timeval tv = { .tv_sec = sec, .tv_usec = us };
+        settimeofday(&tv, NULL);
+	d.s.dt_ok = TRUE;
+	LOGI("time set, %" PRIu32 " sec", sec);
+}
+
 static void deep_sleep(void)
 {
 	LOGI("Entering deep sleep");
@@ -750,7 +761,6 @@ void MwApJoin(uint8_t n) {
 }
 
 void MwSysStatFill(MwCmd *rep) {
-//	Warning: dt_ok not supported yet
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.st_flags = d.s.st_flags;
 	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags, sizeof(MwMsgSysStat));
