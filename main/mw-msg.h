@@ -34,20 +34,11 @@
 
 /** \addtogroup MwApi MwEvent Events parsed by the system FSM.
  *  \{ */
-/* TODO ADD UART EVENTS? MAYBE REMOVE SOCKET EVENTS? */
 typedef enum {
 	MW_EV_NONE = 0,		///< No event.
 	MW_EV_INIT_DONE,	///< Initialization complete.
 	MW_EV_WIFI,		///< WiFi events.
-	MW_EV_SNTP,		///< SNTP configured.
 	MW_EV_SER_RX,		///< Data reception from serial line.
-	MW_EV_SER_TX,		///< Data transmission through serial line complete.
-	MW_EV_TCP_CON,		///< TCP connection established.
-	MW_EV_TCP_RECV,		///< Data received from TCP connection.
-	MW_EV_TCP_SENT,		///< Data sent to peer on TCP connection.
-	MW_EV_UDP_RECV,		///< Data received from UDP connection.
-	MW_EV_CON_DISC,		///< TCP disconnection.
-	MW_EV_CON_ERR,		///< TCP connection error.
 	MW_EV_MAX		///< Number of total events.
 } MwEvent;
 /** \} */

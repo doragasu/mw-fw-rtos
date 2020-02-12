@@ -2,7 +2,7 @@
 Firmare for the ESP8266 WiFi module installed in MegaWiFi cartridges. This firmware talks directly to the MegaWiFi API (mw-api) running on the Genesis/MegaDrive console, allowing it to connect to WiFi access points, and to send and receive data through The Internet using standard TCP and UDP protocols. There are some additional goodies provided by the firmware, like flash read/write functions and SNTP time synchronization.
 
 # Building
-This firmware is based on [ESP8266_RTOS SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware.
+This firmware is based on [ESP8266\_RTOS SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware.
 
 To burn the built firmware, edit the following line of the `Makefile`, and make sure it points to your installation of the mdma utility:
 ```
@@ -21,7 +21,7 @@ Then, when you need to update the firmware, you just need to run the last comman
 
 # Status
 
-This is work in progress. Currently most of the features I intended to implement are working. The most notable things I am still missing are SNTP support (that was working but broke when I migrated from esp-open-rtos to ESP8266_RTOS_SDK) and SSL support for HTTPS. But currently you can:
+This is work in progress. Currently most of the features I intended to implement are working. The most notable things I am still missing are SNTP support (that was working but broke when I migrated from esp-open-rtos to ESP8266\_RTOS\_SDK) and SSL support for HTTPS. But currently you can:
 
 * Configure and associate to access points (including neighbor scan functions).
 * Store up to 3 network configurations.

@@ -39,6 +39,7 @@
 
 // Flash manipulation
 #include <spi_flash.h>
+#include "flash.h"
 
 #include "megawifi.h"
 #include "net_util.h"
@@ -48,17 +49,6 @@
 #include "http.h"
 
 #define MW_SERVER_DEFAULT		"doragasu.com"
-#define SPI_FLASH_BASE	0x40200000
-#define SPI_FLASH_ADDR(flash_addr)	(SPI_FLASH_BASE + (flash_addr))
-
-#define HTTP_CERT_HASH_ADDR	SPI_FLASH_ADDR(MW_CERT_FLASH_ADDR)
-
-#define HTTP_CERT_LEN_ADDR	SPI_FLASH_ADDR(MW_CERT_FLASH_ADDR + \
-		sizeof(uint32_t))
-
-#define HTTP_CERT_ADDR		SPI_FLASH_ADDR(MW_CERT_FLASH_ADDR + \
-		(2 * sizeof(uint32_t)))
-
 /// Flash sector number where the configuration is stored
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
@@ -260,8 +250,6 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
 	}
 
 	// Forward event to sysfsm
-	// TODO When is event freed? It might be a problem if freed just
-	// after exiting this function.
 	msg.e = MW_EV_WIFI;
 	msg.d = event;
 
@@ -540,7 +528,6 @@ static int MwFsmTcpBind(MwMsgBind *b) {
 
 /// Closes a socket on the specified channel
 static void MwSockClose(int ch) {
-	// TODO Might need to use a mutex to access socket variables.
 	// Close socket, remove from file descriptor set and mark as unused
 	int idx = ch - 1;
 
@@ -677,7 +664,7 @@ int MwNvCfgSave(void) {
 		return -1;
 	}
 	// Write configuration to flash
-	if (spi_flash_write(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg,
+	if (spi_flash_write(MW_CFG_FLASH_ADDR, &cfg,
 			sizeof(MwNvCfg)) != ESP_OK) {
 		LOGE("Flash write addr 0x%X failed!", MW_CFG_FLASH_ADDR);
 		return -1;
@@ -763,7 +750,8 @@ void MwApJoin(uint8_t n) {
 void MwSysStatFill(MwCmd *rep) {
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.st_flags = d.s.st_flags;
-	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags, sizeof(MwMsgSysStat));
+	LOGD("Stat flags: 0x%04X, len: %zd", d.s.st_flags,
+			sizeof(MwMsgSysStat));
 }
 
 static int tokens_get(const char *in, const char *token[],
@@ -799,7 +787,7 @@ static void sntp_set_config(void)
 	const char *token[4];
 	int num_tokens;
 
-	num_tokens = tokens_get(cfg.ntpPool, token, 4, NULL);
+	num_tokens = tokens_get(cfg.ntpPool, token, 1 + SNTP_MAX_SERVERS, NULL);
 
 	setenv("TZ", token[0], 1);
 	tzset();
@@ -886,7 +874,7 @@ int MwInit(void) {
 	m.e = MW_EV_INIT_DONE;
 	xQueueSend(d.q, &m, portMAX_DELAY);
 
-	// TODO Start the one-shot inactivity sleep timer
+	// Start the one-shot inactivity sleep timer
 	d.tim = xTimerCreate("SLEEP", MW_SLEEP_TIMER_MS / portTICK_PERIOD_MS,
 			pdFALSE, (void*) 0, sleep_timer_cb);
 	xTimerStart(d.tim, MW_SLEEP_TIMER_MS / portTICK_PERIOD_MS);
@@ -938,292 +926,6 @@ static void rand_fill(uint8_t *buf, uint16_t len)
 	for (i = 0; i < (len & 3); i++) {
 		buf[i] = last[i];
 	}
-}
-
-static esp_http_client_handle_t http_parse_init(const char *url,
-		http_event_handle_cb event_cb)
-{
-	uint32_t cert_len = *((uint32_t*)HTTP_CERT_LEN_ADDR);
-	const char *cert = (const char*)HTTP_CERT_ADDR;
-
-
-	if (!cert_len || cert_len > MW_CERT_MAXLEN || !cert[0] ||
-			0xFF == cert[0]) {
-		LOGW("no valid certificate found, len %" PRIu32 ", start: %d",
-				cert_len, cert[0]);
-		cert = NULL;
-	}
-
-	return http_init(url, cert, event_cb);
-}
-
-static void http_parse_url_set(const char *url, MwCmd *reply)
-{
-	LOGD("set url %s", url);
-	if (!d.http.h) {
-		LOGD("init, HTTP URL: %s", url);
-		d.http.h = http_parse_init(url, NULL);
-		return;
-	}
-
-	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
-		http_url_set(d.http.h, url)) {
-		LOGE("HTTP failed to set URL %s", url);
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LOGD("HTTP URL: %s", url);
-	}
-}
-
-static void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply)
-{
-	LOGD("set method %d", method);
-	if (!d.http.h) {
-		d.http.h = http_parse_init("", NULL);
-	}
-
-	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
-			http_method_set(d.http.h, method)) {
-		LOGE("HTTP failed to set method %d", method);
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LOGD("HTTP method: %d", method);
-	}
-}
-
-static void http_parse_header_add(const char *data, MwCmd *reply)
-{
-	const char *item[2] = {0};
-	int n_items;
-
-	if (!d.http.h) {
-		d.http.h = http_parse_init("", NULL);
-	}
-
-	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s))) {
-		goto err;
-	}
-
-	n_items = itemizer(data, item, 2);
-	LOGD("HTTP header: %s: %s", item[0], item[1]);
-
-	if ((n_items != 2) || http_header_add(d.http.h, item[0], item[1])) {
-		goto err;
-	}
-
-	return;
-err:
-	LOGE("HTTP header add failed");
-	reply->cmd = htons(MW_CMD_ERROR);
-}
-
-static void http_parse_header_del(const char *key, MwCmd *reply)
-{
-	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
-		http_header_del(d.http.h, key)) {
-		LOGE("HTTP failed to del header %s", key);
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LOGD("HTTP del header: %s", key);
-	}
-}
-
-static void http_parse_open(uint32_t write_len, MwCmd *reply)
-{
-	LOGD("opening ");
-	if (((MW_HTTP_ST_IDLE != d.http.s) && (MW_HTTP_ST_ERROR != d.http.s)) ||
-			http_open(d.http.h, write_len)) {
-		LOGE("HTTP open failed");
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LsdChEnable(MW_HTTP_CH);
-		LOGD("HTTP open OK, %" PRIu32 " bytes", write_len);
-		if (write_len) {
-			d.http.remaining = write_len;
-			d.http.s = MW_HTTP_ST_OPEN_CONTENT_WAIT;
-		} else {
-			d.http.s = MW_HTTP_ST_FINISH_WAIT;
-		}
-	}
-}
-
-static uint16_t http_parse_finish(MwCmd *reply)
-{
-	int status;
-	int len = 0;
-	uint16_t replen = 0;
-
-	if ((MW_HTTP_ST_FINISH_WAIT != d.http.s) ||
-			((status = http_finish(d.http.h, &len)) < 0)) {
-		LOGE("HTTP finish failed");
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LOGD("HTTP finish: %d: %" PRId32 " bytes", status, len);
-		reply->dwData[0] = htonl(len);
-		reply->wData[2] = htons(status);
-		reply->datalen = htons(6);
-		replen = 6;
-		if (len) {
-			d.http.remaining = len;
-			d.http.s = MW_HTTP_ST_FINISH_CONTENT_WAIT;
-		} else {
-			d.http.s = MW_HTTP_ST_IDLE;
-			LsdChDisable(MW_HTTP_CH);
-		}
-	}
-
-	return replen;
-}
-
-static void http_parse_cleanup(MwCmd *reply)
-{
-	d.http.s = MW_HTTP_ST_IDLE;
-
-	if (!d.http.h) {
-		return;
-	}
-
-	LsdChDisable(MW_HTTP_CH);
-	if (http_cleanup(d.http.h)) {
-		LOGE("HTTP cleanup failed");
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LOGD("HTTP cleanup OK");
-	}
-	d.http.h = NULL;
-}
-
-static void http_cert_flash_write(const char *data, uint16_t len)
-{
-	static uint16_t written;
-	uint16_t to_write;
-	esp_err_t err;
-
-	// Special condition: if no data payload, reset written counter
-	if (!data && !len) {
-		LOGD("reset data counter");
-		written = 0;
-		return;
-	}
-
-	LOGD("write %" PRIu16 " cert bytes", len);
-	// Note we are using d.http.remaining as total (it is not decremented
-	// each time we write data)
-	to_write = MIN(d.http.remaining - written, len);
-	if (to_write) {
-		err = spi_flash_write(MW_CERT_FLASH_ADDR + 2 * sizeof(uint32_t)
-				+ written, data, to_write);
-		if (err) {
-			LOGE("flash write failed");
-			d.http.s = MW_HTTP_ST_IDLE;
-			LsdChDisable(MW_HTTP_CH);
-			return;
-		}
-		written += to_write;
-	}
-
-	if (written >= d.http.remaining) {
-		// Write certificate hash
-		spi_flash_write(MW_CERT_FLASH_ADDR, &d.http.hash_tmp,
-				sizeof(uint32_t));
-		d.http.s = MW_HTTP_ST_IDLE;
-		LOGI("certificate %" PRIu32 " stored", d.http.hash_tmp);
-		if (to_write < len) {
-			LOGW("ignoring %d certificate bytes", len - to_write);
-		}
-		LsdChDisable(MW_HTTP_CH);
-	}
-}
-
-static int http_parse_cert_query(MwCmd *reply)
-{
-	uint32_t cert = *((uint32_t*)HTTP_CERT_HASH_ADDR);
-	int replen = 0;
-
-	LOGD("cert hash: %08x", cert);
-	if (0xFFFFFFFF == cert) {
-		replen = 0;
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		replen = 4;
-		reply->dwData[0] = htonl(cert);
-	}
-
-	return replen;
-}
-
-static int http_cert_erase(void)
-{
-	int cert_sect = MW_CERT_FLASH_ADDR>>12;
-	int err = FALSE;
-
-	for (int i = 0; !err && i < (1 + ((MW_CERT_MAXLEN - 1) /
-					MW_FLASH_SECT_LEN)); i++) {
-		err = spi_flash_erase_sector(cert_sect + i) != ESP_OK;
-	}
-
-	return err;
-}
-
-static void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len,
-		MwCmd *reply)
-{
-	int err = FALSE;
-	uint32_t installed = *(uint32_t*)HTTP_CERT_ADDR;
-
-	if (d.http.s != MW_HTTP_ST_IDLE && d.http.s != MW_HTTP_ST_ERROR) {
-		LOGE("not allowed in HTTP state %d", d.http.s);
-		goto err_out;
-	}
-	// Check if erase request
-	if (installed != 0xFFFFFFFF && !cert_len) {
-		LOGD("erasing cert as per request");
-		// Erase cert
-		err = http_cert_erase();
-		if (err) {
-			goto err_out;
-		} else {
-			goto ok_out;
-		}
-	}
-	if (x509_hash == installed) {
-		LOGW("cert %08x is already installed", x509_hash);
-	}
-	if (cert_len > MW_CERT_MAXLEN) {
-		LOGE("cert is %d bytes, maximum allowed is "
-				STR(MW_CERT_MAXLEN) " bytes",
-				cert_len);
-		goto err_out;
-	}
-	// Erase the required sectors (round up the division between sect len)
-	LOGD("erasing previous cert");
-	err = http_cert_erase();
-	if (!err) {
-		// Write certificate length, and store for later the hash
-		uint32_t dw_len = cert_len;
-		LOGD("write cert hash %08x, len %" PRIu32, x509_hash, dw_len);
-		err = spi_flash_write(MW_CERT_FLASH_ADDR + sizeof(uint32_t),
-				&dw_len, sizeof(uint32_t));
-		d.http.hash_tmp = x509_hash;
-	}
-	if (err) {
-		LOGE("failed to erase certificate store");
-		goto err_out;
-	}
-
-	LOGI("waiting certificate data");
-	// Reset written data counter
-	LsdChEnable(MW_HTTP_CH);
-	http_cert_flash_write(NULL, 0);
-	d.http.s = MW_HTTP_ST_CERT_SET;
-	d.http.remaining = cert_len;
-
-ok_out:
-	// Everything OK
-	return;
-
-err_out:
-	reply->cmd = htons(MW_CMD_ERROR);
 }
 
 
@@ -1466,7 +1168,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				LOGE("Invalid AP_JOIN on config %d", c->data[0]);
 			} else {
 				MwApJoin(c->data[0]);
-				// TODO: Save configuration to update default AP?
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1572,61 +1273,28 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_WRITE:
-			// Compute effective flash address
-			c->flData.addr = ByteSwapDWord(c->flData.addr) +
-				MW_FLASH_USER_BASE_ADDR;
-			// Check for overflows (avoid malevolous attempts to write to
-			// protected area
-			if ((c->flData.addr + (len - sizeof(uint32_t) - 1)) <
-					MW_FLASH_USER_BASE_ADDR) {
-				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				LOGE("Address/length combination overflows!");
-			} else if (spi_flash_write(c->flData.addr,
-						(uint32_t*)c->flData.data, len - sizeof(uint32_t)) !=
-					ESP_OK) {
-				LOGE("Write to flash failed!");
+			if (flash_write(ntohl(c->flData.addr),
+						len - sizeof(uint32_t),
+						(char*)c->flData.data)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FLASH_READ:
-			// Compute effective flash address
-			c->flRange.addr = ByteSwapDWord(c->flRange.addr) +
-				MW_FLASH_USER_BASE_ADDR;
-			c->flRange.len = ByteSwapWord(c->flRange.len);
-			// Check requested length fits a transfer and there's no overflow
-			// on address and length (maybe a malicious attempt to read
-			// protected area
-			if ((c->flRange.len > MW_MSG_MAX_BUFLEN) || ((c->flRange.addr - 1 +
-					c->flRange.len) < MW_FLASH_USER_BASE_ADDR)) {
+			c->flRange.addr = ntohl(c->flRange.addr);
+			c->flRange.len = ntohs(c->flRange.len);
+			if (flash_read(c->flRange.addr, c->flRange.len,
+						(char*)reply.data)) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				LOGE("Invalid address/length combination.");
-			// Perform read and check result
-			} else if (spi_flash_read(c->flRange.addr,
-						(uint32_t*)reply.data, c->flRange.len) !=
-					ESP_OK) {
-				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				LOGE("Flash read failed!");
-			} else {
-				reply.datalen = ByteSwapWord(c->flRange.len);
-				LOGI("Flash read OK!");
+				c->flRange.len = 0;
 			}
 			LsdSend((uint8_t*)&reply, c->flRange.len + MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_FLASH_ERASE:
-			// Check for sector overflow
-			c->flSect = ByteSwapWord(c->flSect) + MW_FLASH_USER_BASE_SECT;
-			if (c->flSect < MW_FLASH_USER_BASE_SECT) {
+			if (flash_erase(ntohs(c->flSect))) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				LOGW("Wrong sector number.");
-			} else if (spi_flash_erase_sector(c->flSect) !=
-					ESP_OK) {
-				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				LOGE("Sector erase failed!");
-			} else {
-				LOGE("Sector erase OK!");
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1920,34 +1588,8 @@ void MwFsmReady(MwFsmMsg *msg) {
 			}
 			break;
 
-		case MW_EV_TCP_CON:		///< TCP connection established.
-			LOGI("TCP_CON (not parsed)");
-			break;
-
-		case MW_EV_TCP_RECV:	///< Data received from TCP connection.
-			// Forward data to the appropiate channel of serial line
-//			LsdSend(, , d.ss[b->ch - 1]);
-			LOGI("TCP_RECV (not parsed)");
-			break;
-
-		case MW_EV_TCP_SENT:	///< Data sent to peer on TCP connection.
-			LOGI("TCP_SENT (not parsed)");
-			break;
-
-		case MW_EV_UDP_RECV:	///< Data received from UDP connection.
-			LOGI("UDP_RECV (not parsed)");
-			break;
-
-		case MW_EV_CON_DISC:	///< TCP disconnection.
-			LOGI("CON_DISC (not parsed)");
-			break;
-
-		case MW_EV_CON_ERR:		///< TCP connection error.
-			LOGI("CON_ERR (not parsed)");
-			break;
-
 		default:
-			LOGI("MwFsmReady: UNKNOKWN EVENT!");
+			LOGI("UNKNOKWN EVENT %d", msg->e);
 			break;
 	}
 }
@@ -2010,15 +1652,7 @@ static void MwFsm(MwFsmMsg *msg) {
 			// Ignore all events excepting the INIT DONE one
 			if (msg->e == MW_EV_INIT_DONE) {
 				LOGI("INIT DONE!");
-				// If there's a valid AP configuration, try to join it and
-				// jump to the AP_JOIN state. Else jump to IDLE state.
-//				if ((cfg.defaultAp >= 0) && (cfg.defaultAp < MW_NUM_AP_CFGS)) {
-//					MwApJoin(cfg.defaultAp);
-//					// TODO: Maybe we should set an AP join timeout.
-//				} else {
-//					LOGE("No default AP found.\nIDLE!");
-					d.s.sys_stat = MW_ST_IDLE;
-//				}
+				d.s.sys_stat = MW_ST_IDLE;
 			}
 			break;
 
@@ -2224,10 +1858,10 @@ void MwFsmSockTsk(void *pvParameters) {
 						// Error!
 						MwSockClose(ch);
 						LsdChDisable(ch);
-						LOGE("Error %d receiving from socket!", recvd);
+						LOGE("Error %zd receiving from socket!", recvd);
 					} else if (0 == recvd) {
 						// Socket closed
-						// TODO: A listen on a socket closed, should trigger
+						// A listen on a socket closed, should trigger
 						// a 0-byte reception, for the client to be able to
 						// check server state and close the connection.
 						LOGD("Received 0!");
@@ -2239,7 +1873,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						LsdSend(NULL, 0, ch);
 						LsdChDisable(ch);
 					} else {
-						LOGD("%02X %02X %02X %02X: WF->MD %d bytes",
+						LOGD("%02X %02X %02X %02X: WF->MD %zd bytes",
 								buf[0], buf[1], buf[2], buf[3],
 								recvd);
 						LsdSend(buf, (uint16_t)recvd, ch);

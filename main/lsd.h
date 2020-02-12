@@ -5,7 +5,6 @@
  *
  * \author Jesus Alonso (doragasu)
  * \date   2016
- * \todo   Implement UART RTS/CTS handshaking.
  * \todo   Proper implementation of error handling.
  * \defgroup lsd Local Symmetric Data-link
  * \{
@@ -75,8 +74,6 @@
 #define LSD_RECV_PRIO		2
 
 /// Maximum data payload length
-/// TODO IMPORTANT: This should be dynamically configurable!
-//#define LSD_MAX_LEN		 4095
 #define LSD_MAX_LEN		 CONFIG_TCP_MSS
 
 /************************************************************************//**

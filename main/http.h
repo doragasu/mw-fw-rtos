@@ -13,69 +13,30 @@ struct http_header {
 	struct list_head _head;
 };
 
-esp_http_client_handle_t http_init(const char *url, const char *cert_pem, http_event_handle_cb event_cb)
-{
-	esp_http_client_config_t config = {
-		.url = url,
-		.cert_pem = cert_pem
-	};
+esp_http_client_handle_t http_parse_init(const char *url,
+		http_event_handle_cb event_cb);
 
-	return esp_http_client_init(&config);
-}
+void http_parse_url_set(const char *url, MwCmd *reply);
 
-static inline int http_url_set(esp_http_client_handle_t client,
-		const char *url)
-{
-	return esp_http_client_set_url(client, url);
-}
+void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply);
 
-static inline int http_method_set(esp_http_client_handle_t client,
-		esp_http_client_method_t method)
-{
-	return esp_http_client_set_method(client, method);
-}
+void http_parse_header_add(const char *data, MwCmd *reply);
 
-static inline int http_header_add(esp_http_client_handle_t client,
-		const char *key, const char *value)
-{
-	return esp_http_client_set_header(client, key, value);
-}
+void http_parse_header_del(const char *key, MwCmd *reply);
 
-static inline int http_header_del(esp_http_client_handle_t client,
-		const char *key)
-{
-	return esp_http_client_delete_header(client, key);
-}
+void http_parse_open(uint32_t write_len, MwCmd *reply);
 
-static inline int http_open(esp_http_client_handle_t client, int write_len)
-{
-	return esp_http_client_open(client, write_len);
-}
+uint16_t http_parse_finish(MwCmd *reply);
 
-static inline int http_body_write(esp_http_client_handle_t client,
-		const char *data, int len)
-{
-	return esp_http_client_write(client, data, len);
-}
+void http_parse_cleanup(MwCmd *reply);
 
-static inline int http_finish(esp_http_client_handle_t client, int *data_len)
-{
-	int len;
+void http_cert_flash_write(const char *data, uint16_t len);
 
-	len = esp_http_client_fetch_headers(client);
-	if (ESP_FAIL == len) {
-		return ESP_FAIL;
-	}
-	if (data_len) {
-		*data_len = len;
-	}
-	return esp_http_client_get_status_code(client);
-}
+int http_parse_cert_query(MwCmd *reply);
 
-static inline int http_cleanup(esp_http_client_handle_t client)
-{
-	return esp_http_client_cleanup(client);
-}
+int http_cert_erase(void);
+
+void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len, MwCmd *reply);
 
 #endif /*_HTTP_H_*/
 

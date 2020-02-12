@@ -36,7 +36,6 @@
 #define FLASH_LENGTH		(4*1024*1024)
 
 /// Maximum number of supported SNTP servers
-/// \todo Set this properly
 //#define SNTP_MAX_SERVERS	3
 
 /// Default timezone

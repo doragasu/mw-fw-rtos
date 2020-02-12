@@ -5,9 +5,6 @@
  *
  * \author Jesus Alonso (doragasu)
  * \date   2016
- * \todo   Implement UART RTS/CTS handshaking.
- * \todo   Currently LsdSend() blocks polling the UART Fifo. An implemen-
- *         tation using interrupts/DMA should be in the high priority list.
  * \todo   Proper implementation of error handling.
  ****************************************************************************/
 #include <string.h>
@@ -261,9 +258,6 @@ void LsdRecvTsk(void *pvParameters) {
 		receiving = TRUE;
 		while (receiving) {
 			// Receive byte by byte
-			// TODO: Optimize receive routine (requires modifying the interrupt
-			// reception module to allow configuring FIFO triggers and to also
-			// use timeout interrupts.
 			if (uart_read_bytes(LSD_UART, &recv, 1, portMAX_DELAY)) {
 				switch (d.rxs) {
 					case LSD_ST_IDLE:			// Do nothing!
