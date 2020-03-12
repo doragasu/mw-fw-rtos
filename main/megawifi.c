@@ -742,6 +742,9 @@ void MwApJoin(uint8_t n) {
 	strncpy((char*)if_cfg.sta.password, cfg.ap[n].pass, MW_PASS_MAXLEN);
 	esp_wifi_set_config(ESP_IF_WIFI_STA, &if_cfg);
 	esp_wifi_start();
+	tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, "MegaWiFi-"
+			STR(MW_FW_VERSION_MAJOR) "-"
+			STR(MW_FW_VERSION_MINOR));
 	LOGI("AP ASSOC %d", n);
 	d.s.sys_stat = MW_ST_AP_JOIN;
 	d.n_reassoc = 0;
