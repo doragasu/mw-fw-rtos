@@ -13,7 +13,7 @@
 /// Major firmware version
 #define MW_FW_VERSION_MAJOR	1
 /// Minor firmware version
-#define MW_FW_VERSION_MINOR	0
+#define MW_FW_VERSION_MINOR	1
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 
@@ -156,8 +156,14 @@
 /** \addtogroup MwApi ApCfg Configuration needed to connect to an AP
  *  \{ */
 typedef struct {
+	/// SSID
 	char ssid[MW_SSID_MAXLEN];
+	/// Password
 	char pass[MW_PASS_MAXLEN];
+	/// Connection PHY protocol
+	uint8_t phy;
+	/// Reserved, set to 0
+	uint8_t reserved[3];
 } ApCfg;
 /** \} */
 

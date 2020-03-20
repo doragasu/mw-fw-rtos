@@ -72,6 +72,7 @@ typedef struct {
 /// AP configuration message
 typedef struct {
 	uint8_t cfgNum;
+	uint8_t phy_type;
 	char ssid[MW_SSID_MAXLEN];
 	char pass[MW_PASS_MAXLEN];
 } MwMsgApCfg;

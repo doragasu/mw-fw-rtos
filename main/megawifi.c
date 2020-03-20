@@ -53,10 +53,14 @@
 #define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
 /// Maximum number of reassociation attempts
-#define MW_REASSOC_MAX		3
+#define MW_REASSOC_MAX		5
 
 /// Sleep timer period in ms
 #define MW_SLEEP_TIMER_MS	30000
+
+/// Default PHY protocol bitmap
+#define MW_PHY_PROTO_DEF	WIFI_PROTOCAL_11B | WIFI_PROTOCAL_11G | \
+	WIFI_PROTOCAL_11N
 
 /** \addtogroup MwApi MwFdOps FD set operations (add/remove)
  *  \{ */
@@ -197,6 +201,8 @@ typedef struct {
 	struct sockaddr_in raddr[MW_MAX_SOCK];
 	/// Association retries
 	uint8_t n_reassoc;
+	/// Current PHY type
+	uint8_t phy;
 	/// HTTP machine data
 	struct http_data http;
 } MwData;
@@ -356,7 +362,7 @@ static int build_scan_reply(const wifi_ap_record_t *ap, uint8_t n_aps,
 	return data_len;
 }
 
-static int wifi_scan(uint8_t *data)
+static int wifi_scan(uint8_t phy_type, uint8_t *data)
 {
 	int length = -1;
 	uint16_t n_aps = 0;
@@ -364,6 +370,7 @@ static int wifi_scan(uint8_t *data)
 	wifi_scan_config_t scan_cfg = {};
 	esp_err_t err;
 
+	d.phy = phy_type;
 	err = esp_wifi_start();
 	if (ESP_OK != err) {
 		LOGE("wifi start failed: %s!", esp_err_to_name(err));
@@ -645,6 +652,7 @@ static void MwSetDefaultCfg(void) {
 	cfg.ntpPoolLen = sizeof(MW_TZ_DEF) + sizeof(MW_SNTP_SERV_0) +
 		sizeof(MW_SNTP_SERV_1) + sizeof(MW_SNTP_SERV_2) + 1;
 	strcpy(cfg.serverUrl, MW_SERVER_DEFAULT);
+	cfg.ap[0].phy = cfg.ap[1].phy = cfg.ap[2].phy = MW_PHY_PROTO_DEF;
 	// NOTE: Checksum is only computed before storing configuration
 }
 
@@ -740,6 +748,7 @@ void MwApJoin(uint8_t n) {
 	SetIpCfg(n);
 	strncpy((char*)if_cfg.sta.ssid, cfg.ap[n].ssid, MW_SSID_MAXLEN);
 	strncpy((char*)if_cfg.sta.password, cfg.ap[n].pass, MW_PASS_MAXLEN);
+	d.phy = cfg.ap[n].phy;
 	esp_wifi_set_config(ESP_IF_WIFI_STA, &if_cfg);
 	esp_wifi_start();
 	tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, "MegaWiFi-"
@@ -753,7 +762,7 @@ void MwApJoin(uint8_t n) {
 void MwSysStatFill(MwCmd *rep) {
 	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
 	rep->sysStat.st_flags = d.s.st_flags;
-	LOGD("Stat flags: 0x%04X, len: %zd", d.s.st_flags,
+	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags,
 			sizeof(MwMsgSysStat));
 }
 
@@ -812,15 +821,16 @@ int MwInit(void) {
 	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
 	if (sizeof(MwNvCfg) > MW_FLASH_SECT_LEN) {
-		LOGE("STOP: config length too big (%zd)", sizeof(MwNvCfg));
+		LOGE("STOP: config length too big (%d)", sizeof(MwNvCfg));
 		deep_sleep();
 	}
-	LOGI("Configured SPI length: %zd", spi_flash_get_chip_size());
+	LOGI("Configured SPI length: %d", spi_flash_get_chip_size());
 	// Load configuration from flash
 	MwCfgLoad();
 	// Set default values for global variables
 	d.s.st_flags = 0;
 	memset(&d, 0, sizeof(d));
+	d.phy = MW_PHY_PROTO_DEF;
 	d.s.sys_stat = MW_ST_INIT;
 	for (i = 0; i < MW_MAX_SOCK; i++) {
 		d.sock[i] = -1;
@@ -995,6 +1005,34 @@ static void parse_server_url_set(const char *url, MwCmd *reply)
 	}
 }
 
+static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
+		const char *pass, MwCmd *reply)
+{
+	if (num >= MW_NUM_AP_CFGS) {
+		LOGE("Tried to set AP for cfg %d", num);
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else if (phy_type != WIFI_PROTOCAL_11B &&
+			phy_type != (WIFI_PROTOCAL_11B + WIFI_PROTOCAL_11G) &&
+			phy_type != (WIFI_PROTOCAL_11B + WIFI_PROTOCAL_11G +
+				WIFI_PROTOCAL_11N)) {
+		LOGE("PHY type 0x%X not supported", phy_type);
+		reply->cmd = htons(MW_CMD_ERROR);
+	} else {
+		// Copy configuration and save it to flash
+		LOGI("Setting AP configuration %d...", num);
+		strncpy(cfg.ap[num].ssid, ssid, MW_SSID_MAXLEN);
+		strncpy(cfg.ap[num].pass, pass, MW_PASS_MAXLEN);
+		cfg.ap[num].phy = phy_type;
+		cfg.ap[num].reserved[0] = cfg.ap[num].reserved[1] =
+			 cfg.ap[num].reserved[2] = 0;
+		LOGI("phy %d, ssid: %s, pass: %s", phy_type, ssid, pass);
+		cfg.defaultAp = num;
+		if (MwNvCfgSave() < 0) {
+			reply->cmd = htons(MW_CMD_ERROR);
+		}
+	}
+}
+
 /// Process command requests (coming from the serial line)
 int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	MwCmd reply;
@@ -1043,7 +1081,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_AP_SCAN:
 	    		LOGI("SCAN!");
-			int scan_len = wifi_scan(reply.data);
+			int scan_len = wifi_scan(c->data[0], reply.data);
 			if (scan_len <= 0) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
@@ -1054,22 +1092,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_AP_CFG:
-			tmp = c->apCfg.cfgNum;
-			if (tmp >= MW_NUM_AP_CFGS) {
-				LOGE("Tried to set AP for cfg %d!", tmp);
-				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			} else {
-				// Copy configuration and save it to flash
-				LOGI("Setting AP configuration %d...", tmp);
-				strncpy(cfg.ap[tmp].ssid, c->apCfg.ssid, MW_SSID_MAXLEN);
-				strncpy(cfg.ap[tmp].pass, c->apCfg.pass, MW_PASS_MAXLEN);
-				LOGI("ssid: %s, pass: %s", cfg.ap[tmp].ssid,
-						cfg.ap[tmp].pass);
-				cfg.defaultAp = tmp;
-				if (MwNvCfgSave() < 0) {
-					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				}
-			}
+			ap_cfg_set(c->apCfg.cfgNum, c->apCfg.phy_type, c->apCfg.ssid,
+					c->apCfg.pass, &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -1086,8 +1110,9 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				reply.apCfg.cfgNum = c->apCfg.cfgNum;
 				strncpy(reply.apCfg.ssid, cfg.ap[tmp].ssid, MW_SSID_MAXLEN);
 				strncpy(reply.apCfg.pass, cfg.ap[tmp].pass, MW_PASS_MAXLEN);
-				LOGI("ssid: %s, pass: %s", reply.apCfg.ssid,
-						reply.apCfg.pass);
+				reply.apCfg.phy_type = cfg.ap[tmp].phy;
+				LOGI("phy: 0x%X, ssid: %s, pass: %s", reply.apCfg.phy_type,
+						reply.apCfg.ssid, reply.apCfg.pass);
 			} 
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
@@ -1554,7 +1579,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 			break;
 
 		case MW_EV_SER_RX:		///< Data reception from serial line.
-			LOGI("Serial recvd %d bytes.", b->len);
+			LOGD("Serial recvd %d bytes.", b->len);
 			// If using channel 0, process command. Else forward message
 			// to the appropiate socket.
 			if (MW_CTRL_CH == b->ch) {
@@ -1600,8 +1625,11 @@ void MwFsmReady(MwFsmMsg *msg) {
 static void ap_join_ev_handler(system_event_t *wifi)
 {
 	LOGD("WiFi event: %d", wifi->event_id);
+	uint8_t proto = 0;
 	switch(wifi->event_id) {
 		case SYSTEM_EVENT_STA_START:
+			LOGI("setting mode %x", d.phy);
+			esp_wifi_set_protocol(ESP_IF_WIFI_STA, d.phy);
 			esp_wifi_connect();
 			break;
 
@@ -1615,6 +1643,7 @@ static void ap_join_ev_handler(system_event_t *wifi)
 		case SYSTEM_EVENT_STA_CONNECTED:
 			LOGD("station:"MACSTR" join",
 					MAC2STR(wifi->event_info.connected.bssid));
+			LOGI("MODE: 0x%X", esp_wifi_get_protocol(ESP_IF_WIFI_STA, &proto));
 			break;
 
 		case SYSTEM_EVENT_STA_DISCONNECTED:
@@ -1624,11 +1653,6 @@ static void ap_join_ev_handler(system_event_t *wifi)
 			if (d.n_reassoc < MW_REASSOC_MAX) {
 				if (wifi->event_info.disconnected.reason ==
 						WIFI_REASON_BASIC_RATE_NOT_SUPPORT) {
-					/*Switch to 802.11 bgn mode */
-					esp_wifi_set_protocol(ESP_IF_WIFI_STA,
-							WIFI_PROTOCAL_11B |
-							WIFI_PROTOCAL_11G |
-							WIFI_PROTOCAL_11N);
 				}
 				esp_wifi_connect();
 			} else {
@@ -1680,7 +1704,7 @@ static void MwFsm(MwFsmMsg *msg) {
 				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
 					MwSysStatFill(rep);
-					LOGI("%02X %02X %02X %02X", rep->data[0],
+					LOGD("%02X %02X %02X %02X", rep->data[0],
 							rep->data[1], rep->data[2], rep->data[3]);
 					LsdSend((uint8_t*)rep, sizeof(MwMsgSysStat) + MW_CMD_HEADLEN,
 							0);
@@ -1861,7 +1885,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						// Error!
 						MwSockClose(ch);
 						LsdChDisable(ch);
-						LOGE("Error %zd receiving from socket!", recvd);
+						LOGE("Error %d receiving from socket!", recvd);
 					} else if (0 == recvd) {
 						// Socket closed
 						// A listen on a socket closed, should trigger
@@ -1876,7 +1900,7 @@ void MwFsmSockTsk(void *pvParameters) {
 						LsdSend(NULL, 0, ch);
 						LsdChDisable(ch);
 					} else {
-						LOGD("%02X %02X %02X %02X: WF->MD %zd bytes",
+						LOGD("%02X %02X %02X %02X: WF->MD %d bytes",
 								buf[0], buf[1], buf[2], buf[3],
 								recvd);
 						LsdSend(buf, (uint16_t)recvd, ch);
