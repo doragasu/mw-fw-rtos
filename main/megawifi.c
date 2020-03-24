@@ -1625,7 +1625,6 @@ void MwFsmReady(MwFsmMsg *msg) {
 static void ap_join_ev_handler(system_event_t *wifi)
 {
 	LOGD("WiFi event: %d", wifi->event_id);
-	uint8_t proto = 0;
 	switch(wifi->event_id) {
 		case SYSTEM_EVENT_STA_START:
 			LOGI("setting mode %x", d.phy);
@@ -1643,7 +1642,6 @@ static void ap_join_ev_handler(system_event_t *wifi)
 		case SYSTEM_EVENT_STA_CONNECTED:
 			LOGD("station:"MACSTR" join",
 					MAC2STR(wifi->event_info.connected.bssid));
-			LOGI("MODE: 0x%X", esp_wifi_get_protocol(ESP_IF_WIFI_STA, &proto));
 			break;
 
 		case SYSTEM_EVENT_STA_DISCONNECTED:
