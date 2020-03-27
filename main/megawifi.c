@@ -25,8 +25,12 @@
 #include <lwip/ip_addr.h>
 #include <lwip/apps/sntp.h>
 
-// mbedtls
+// TLS
+#ifdef CONFIG_SSL_USING_WOLFSSL
+#include <openssl/md5.h>
+#else
 #include <mbedtls/md5.h>
+#endif
 
 // Time keeping
 #include <time.h>
@@ -656,10 +660,23 @@ static void MwSetDefaultCfg(void) {
 	// NOTE: Checksum is only computed before storing configuration
 }
 
+static void do_md5(const char *buf, int len, unsigned char *result)
+{
+#ifdef CONFIG_SSL_USING_WOLFSSL
+	MD5_CTX ctx = {};
+
+	MD5_Init(&ctx);
+	MD5_Update(&ctx, buf, len);
+	MD5_Final(result, &ctx);
+#else
+	mbedtls_md5((const unsigned char*)buf, len, result);
+#endif
+}
+
 /// Saves configuration to non volatile flash
 int MwNvCfgSave(void) {
 	// Compute MD5 of the configuration data
-	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
+	do_md5((const char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), cfg.md5);
 #ifdef _DEBUG_MSGS
 	char md5_str[33];
@@ -693,7 +710,7 @@ int MwCfgLoad(void) {
 	// Load configuration from flash
 	spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
 	// Check MD5
-	mbedtls_md5((const unsigned char*)&cfg, ((uint32_t)&cfg.md5) - 
+	do_md5((const char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), md5);
 	if (!memcmp(cfg.md5, md5, 16)) {
 		// MD5 test passed, return with loaded configuration
