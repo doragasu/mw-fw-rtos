@@ -222,15 +222,10 @@ static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
 
-/// Sets the time. Called by the lwip SNTP module.
-/// \note For this to work, edit lwipopts.h, and point
-/// SNTP_SET_SYSTEM_TIME_US to this function.
-void megawifi_set_time(uint32_t sec, uint32_t us)
+static void megawifi_set_time(struct timeval *tv)
 {
-        struct timeval tv = { .tv_sec = sec, .tv_usec = us };
-        settimeofday(&tv, NULL);
 	d.s.dt_ok = TRUE;
-	LOGI("time set, %" PRIu32 " sec", sec);
+	LOGI("%ld sec", tv->tv_sec);
 }
 
 static void deep_sleep(void)
@@ -306,7 +301,7 @@ static void http_data_recv(void)
 /// Prints a list of found scanned stations
 static void ap_print(const wifi_ap_record_t *ap, int n_aps) {
 	wifi_auth_mode_t auth;
-	const char *auth_str[WIFI_AUTH_MAX + 1] = {
+	const char * const auth_str[WIFI_AUTH_MAX + 1] = {
 		"OPEN", "WEP", "WPA_PSK", "WPA2_PSK", "WPA_WPA2_PSK",
 		"WPA_WPA2_ENTERPRISE", "UNKNOWN"
 	};
@@ -897,6 +892,7 @@ int MwInit(void) {
 	sntp_setoperatingmode(SNTP_OPMODE_POLL);
 	sntp_set_config();
 	sntp_init();
+	sntp_set_time_sync_notification_cb(megawifi_set_time);
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(d.q);
 	LsdChEnable(MW_CTRL_CH);

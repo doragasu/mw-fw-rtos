@@ -1,8 +1,10 @@
 # mw-fw-rtos
+
 Firmare for the ESP8266 WiFi module installed in MegaWiFi cartridges. This firmware talks directly to the MegaWiFi API (mw-api) running on the Genesis/MegaDrive console, allowing it to connect to WiFi access points, and to send and receive data through The Internet using standard TCP and UDP protocols. There are some additional goodies provided by the firmware, like flash read/write functions and SNTP time synchronization.
 
 # Building
-This firmware is based on [ESP8266\_RTOS SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware.
+
+This firmware is based on [ESP8266\_RTOS\_SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware. Currently this project builds against `release/v3.3` branch, so make sure to check it out.
 
 To burn the built firmware, edit the following line of the `Makefile`, and make sure it points to your installation of the mdma utility:
 ```
@@ -17,27 +19,31 @@ $ make partitions
 $ make cart
 ```
 
-Then, when you need to update the firmware, you just need to run the last command (`make cart`).
+Then, when you need to update the firmware, you just need to run the last command (`make cart`), no need to burn the boot and partitions again.
 
 # Status
 
-This is work in progress. Currently most of the features I intended to implement are working. The most notable things I am still missing are SNTP support (that was working but broke when I migrated from esp-open-rtos to ESP8266\_RTOS\_SDK) and SSL support for HTTPS. But currently you can:
+This firmware, paired with the `mw-api` running on a Megadrive/Genesis, allows the console to:
 
 * Configure and associate to access points (including neighbor scan functions).
 * Store up to 3 network configurations.
 * Store up to 3 gamertags.
 * Use TCP and UDP for transport.
 * Create both client and server sockets.
-* Perform HTTP requests.
+* Perform HTTP/HTTPS requests.
+* Synchronize the date/time from NTP servers.
 * Generate random numbers blazingly fast.
 * Store and read custom data on non volatile flash (up to 24 megabits are available in addition to the standard 32 megabits of the cart).
 
 # Authors
-This program has been written by doragasu.
+
+This program has been written by doragasu. This is part of [MegaWiFi project](https://github.com/doragasu/mw).
 
 # Contributions
+
 Contributions are welcome. If you find a bug please open an issue, and if you have implemented a cool feature/improvement, please send a pull request.
 
 # License
-This program is provided with NO WARRANTY, under the [GPLv3 license](https://www.gnu.org/licenses/gpl-3.0.html). For the license terms of `esp-open-rtos`, [please read here](https://github.com/SuperHouse/esp-open-rtos/blob/master/README.md#licensing).
+
+This program is provided with NO WARRANTY, under the [GPLv3 license](https://www.gnu.org/licenses/gpl-3.0.html). Make sure you also check `ESP8266_RTOS_SDK` for its license terms.
 
