@@ -256,7 +256,8 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
 
 	// Forward event to sysfsm
 	msg.e = MW_EV_WIFI;
-	msg.d = event;
+	msg.d = malloc(sizeof(system_event_t));
+	memcpy(msg.d, event, sizeof(system_event_t));
 
 	xQueueSend(q, &msg, portMAX_DELAY);
 	return ESP_OK;
@@ -537,8 +538,8 @@ static void MwSockClose(int ch) {
 	// Close socket, remove from file descriptor set and mark as unused
 	int idx = ch - 1;
 
-	lwip_close(d.sock[idx]);
 	FD_CLR(d.sock[idx], &d.fds);
+	lwip_close(d.sock[idx]);
 	// No channel associated with this socket
 	d.chan[d.sock[idx] - LWIP_SOCKET_OFFSET] = -1;
 	d.sock[idx] = -1; // No socket on this channel
@@ -552,6 +553,7 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 	unsigned int local_port;
 	unsigned int remote_port;
 	struct addrinfo *raddr;
+	struct sockaddr_in local;
 
 	err = MwChannelCheck(addr->channel);
 	if (err) {
@@ -567,7 +569,12 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 		return -1;
 	}
 
-	if (!remote_port && addr->data[0]) {
+	memset(local.sin_zero, 0, sizeof(local.sin_zero));
+	local.sin_len = sizeof(struct sockaddr_in);
+	local.sin_family = AF_INET;
+	local.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+	local.sin_port = lwip_htons(local_port);
+	if (remote_port && addr->data[0]) {
 		// Communication with remote peer
 		LOGE("UDP ch %d, port %d to addr %s:%d.", addr->channel,
 				local_port, addr->data, remote_port);
@@ -582,18 +589,13 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 	} else if (local_port) {
 		// Server in reuse mode
 		LOGI("UDP ch %d, src port %d.", addr->channel, local_port);
-
-		memset(d.raddr[idx].sin_zero, 0, sizeof(d.raddr[idx].sin_zero));
-		d.raddr[idx].sin_len = sizeof(struct sockaddr_in);
-		d.raddr[idx].sin_family = AF_INET;
-		d.raddr[idx].sin_addr.s_addr = lwip_htonl(INADDR_ANY);
-		d.raddr[idx].sin_port = lwip_htons(local_port);
+		d.raddr[idx] = local;
 	} else {
 		LOGE("Invalid UDP socket data");
 		return -1;
 	}
 
-	if (lwip_bind(s, (struct sockaddr*)&d.raddr[idx],
+	if (lwip_bind(s, (struct sockaddr*)&local,
 				sizeof(struct sockaddr_in)) < 0) {
 		LOGE("bind() failed. Is UDP port in use?");
 		lwip_close(s);
@@ -1512,7 +1514,7 @@ static int MwUdpSend(int idx, const void *data, int len) {
 	int s = d.sock[idx];
 	int sent;
 
-	if (d.raddr[idx].sin_addr.s_addr) {
+	if (d.raddr[idx].sin_addr.s_addr != lwip_htonl(INADDR_ANY)) {
 		sent = lwip_sendto(s, data, len, 0, (struct sockaddr*)
 				&d.raddr[idx], sizeof(struct sockaddr_in));
 	} else {
@@ -1766,6 +1768,10 @@ static void MwFsm(MwFsmMsg *msg) {
 		default:
 			break;
 	}
+	// Free WiFi event
+	if (MW_EV_WIFI == msg->e) {
+		free(msg->d);
+	}
 }
 
 // Accept incoming connection and get fds. Then close server socket (no more
@@ -1806,7 +1812,7 @@ static int MwUdpRecv(int idx, char *buf) {
 	struct sockaddr_in remote;
 	socklen_t addr_len = sizeof(remote);
 
-	if (d.raddr->sin_addr.s_addr) {
+	if (d.raddr[idx].sin_addr.s_addr != lwip_htonl(INADDR_ANY)) {
 		// Receive only from specified address
 		recvd = lwip_recvfrom(s, buf, LSD_MAX_LEN, 0,
 				(struct sockaddr*)&remote, &addr_len);
