@@ -115,7 +115,9 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_METHOD_SET - 32))| (1<<(MW_CMD_HTTP_CERT_QUERY - 32))|
 	(1<<(MW_CMD_HTTP_CERT_SET - 32))  | (1<<(MW_CMD_HTTP_HDR_ADD - 32)) |
 	(1<<(MW_CMD_HTTP_HDR_DEL - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32)) |
-	(1<<(MW_CMD_SERVER_URL_GET - 32)) | (1<<(MW_CMD_SERVER_URL_SET - 32))
+	(1<<(MW_CMD_SERVER_URL_GET - 32)) | (1<<(MW_CMD_SERVER_URL_SET - 32)) |
+	(1<<(MW_CMD_WIFI_ADV_GET - 32)) | (1<<(MW_CMD_WIFI_ADV_SET - 32)) |
+	(1<<(MW_CMD_NV_CFG_SAVE - 32))
 };
 
 /// Commands allowed while in READY state
@@ -141,7 +143,8 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_HDR_ADD - 32))  | (1<<(MW_CMD_HTTP_HDR_DEL - 32))   |
 	(1<<(MW_CMD_HTTP_OPEN - 32))     | (1<<(MW_CMD_HTTP_FINISH - 32))    |
 	(1<<(MW_CMD_HTTP_CLEANUP - 32))  | (1<<(MW_CMD_SERVER_URL_GET - 32)) |
-	(1<<(MW_CMD_SERVER_URL_SET - 32))
+	(1<<(MW_CMD_SERVER_URL_SET - 32))| (1<<(MW_CMD_WIFI_ADV_GET - 32))   |
+	(1<<(MW_CMD_WIFI_ADV_SET - 32))  | (1<<(MW_CMD_NV_CFG_SAVE - 32))
 };
 
 /*
@@ -154,6 +157,8 @@ void MwFsmSockTsk(void *pvParameters);
 /** \addtogroup MwApi MwNvCfg Configuration saved to non-volatile memory.
  *  \{ */
 typedef struct {
+	/// Advanced WiFi config
+	struct mw_wifi_adv_cfg wifi;
 	/// Access point configuration (SSID, password).
 	ApCfg ap[MW_NUM_AP_CFGS];
 	/// IPv4 (IP addr, mask, gateway). If IP=0.0.0.0, use DHCP.
@@ -222,10 +227,12 @@ static MwData d;
 /// Temporal data buffer for data forwarding
 static uint8_t buf[LSD_MAX_LEN];
 
-static void megawifi_set_time(struct timeval *tv)
+void megawifi_set_time(uint32_t sec, uint32_t us)
 {
+        struct timeval tv = { .tv_sec = sec, .tv_usec = us };
+        settimeofday(&tv, NULL);
 	d.s.dt_ok = TRUE;
-	LOGI("%ld sec", tv->tv_sec);
+	LOGI("time set, %" PRIu32 " sec", sec);
 }
 
 static void deep_sleep(void)
@@ -360,6 +367,46 @@ static int build_scan_reply(const wifi_ap_record_t *ap, uint8_t n_aps,
 	*data = i;
 
 	return data_len;
+}
+
+#define WIFI_CFG_FROM_NVS(param)	wifi_cfg.param = cfg.wifi.param
+static esp_err_t wifi_init(void)
+{
+	esp_err_t err;
+	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
+	WIFI_CFG_FROM_NVS(ampdu_rx_enable);
+	WIFI_CFG_FROM_NVS(amsdu_rx_enable);
+	WIFI_CFG_FROM_NVS(left_continuous_rx_buf_num);
+	WIFI_CFG_FROM_NVS(qos_enable);
+	WIFI_CFG_FROM_NVS(rx_ampdu_buf_len);
+	WIFI_CFG_FROM_NVS(rx_ampdu_buf_num);
+	WIFI_CFG_FROM_NVS(rx_ba_win);
+	WIFI_CFG_FROM_NVS(rx_buf_len);
+	WIFI_CFG_FROM_NVS(rx_buf_num);
+	WIFI_CFG_FROM_NVS(rx_max_single_pkt_len);
+	WIFI_CFG_FROM_NVS(rx_pkt_num);
+	WIFI_CFG_FROM_NVS(tx_buf_num);
+
+	tcpip_adapter_init();
+
+	err = esp_event_loop_init(event_handler, d.q);
+	if (err) {
+		LOGE("failed to initialize event loop: %s",
+				esp_err_to_name(err));
+		goto out;
+	}
+
+	// Configure and start WiFi interface
+	err = esp_wifi_init(&wifi_cfg);
+	if (err) {
+		LOGE("wifi init failed: %s", esp_err_to_name(err));
+		goto out;
+	}
+	esp_wifi_set_storage(WIFI_STORAGE_RAM);
+	esp_wifi_set_mode(WIFI_MODE_STA);
+
+out:
+	return err;
 }
 
 static int wifi_scan(uint8_t phy_type, uint8_t *data)
@@ -646,6 +693,19 @@ static int MwCmdInList(uint8_t cmd, const uint32_t list[2]) {
 static void MwSetDefaultCfg(void) {
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.defaultAp = -1;
+	// Default WiFi config, from menuconfig parameters
+	cfg.wifi.ampdu_rx_enable = WIFI_AMPDU_RX_ENABLED;
+	cfg.wifi.amsdu_rx_enable = WIFI_AMSDU_RX_ENABLED;
+	cfg.wifi.left_continuous_rx_buf_num = CONFIG_ESP8266_WIFI_LEFT_CONTINUOUS_RX_BUFFER_NUM;
+	cfg.wifi.qos_enable = WIFI_QOS_ENABLED;
+	cfg.wifi.rx_ampdu_buf_len = WIFI_AMPDU_RX_AMPDU_BUF_LEN;
+	cfg.wifi.rx_ampdu_buf_num = WIFI_AMPDU_RX_AMPDU_BUF_NUM;
+	cfg.wifi.rx_ba_win = WIFI_AMPDU_RX_BA_WIN;
+	cfg.wifi.rx_buf_len = WIFI_HW_RX_BUFFER_LEN;
+	cfg.wifi.rx_buf_num = CONFIG_ESP8266_WIFI_RX_BUFFER_NUM;
+	cfg.wifi.rx_max_single_pkt_len = WIFI_RX_MAX_SINGLE_PKT_LEN;
+	cfg.wifi.rx_pkt_num = CONFIG_ESP8266_WIFI_RX_PKT_NUM;
+	cfg.wifi.tx_buf_num = CONFIG_ESP8266_WIFI_TX_PKT_NUM;
 	// Copy the default timezone and NTP servers
 	*(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(1 + StrCpyDst(cfg.ntpPool,
 		MW_TZ_DEF), MW_SNTP_SERV_0), MW_SNTP_SERV_1), MW_SNTP_SERV_2)) =
@@ -671,7 +731,7 @@ static void do_md5(const char *buf, int len, unsigned char *result)
 }
 
 /// Saves configuration to non volatile flash
-int MwNvCfgSave(void) {
+static int mw_nv_cfg_save(void) {
 	// Compute MD5 of the configuration data
 	do_md5((const char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), cfg.md5);
@@ -697,7 +757,6 @@ int MwNvCfgSave(void) {
 
 void MwApCfg(void) {
 }
-
 // Load configuration from flash. Return 0 if configuration was successfully
 // loaded and verified, 1 if configuration check did not pass and default
 // configuration has been loaded instead.
@@ -824,15 +883,29 @@ static void sntp_set_config(void)
 	}
 }
 
+#define PRINT_WIFI_CFG(param) LOGI(#param " = %d", cfg.wifi.param)
+static void wifi_cfg_log(void)
+{
+	PRINT_WIFI_CFG(ampdu_rx_enable);
+	PRINT_WIFI_CFG(amsdu_rx_enable);
+	PRINT_WIFI_CFG(left_continuous_rx_buf_num);
+	PRINT_WIFI_CFG(qos_enable);
+	PRINT_WIFI_CFG(rx_ampdu_buf_len);
+	PRINT_WIFI_CFG(rx_ampdu_buf_num);
+	PRINT_WIFI_CFG(rx_ba_win);
+	PRINT_WIFI_CFG(rx_buf_len);
+	PRINT_WIFI_CFG(rx_buf_num);
+	PRINT_WIFI_CFG(rx_max_single_pkt_len);
+	PRINT_WIFI_CFG(rx_pkt_num);
+	PRINT_WIFI_CFG(tx_buf_num);
+}
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/
 int MwInit(void) {
 	MwFsmMsg m;
 	int i;
-	uint8_t tmp;
-	esp_err_t err;
-	wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
 	if (sizeof(MwNvCfg) > MW_FLASH_SECT_LEN) {
 		LOGE("STOP: config length too big (%d)", sizeof(MwNvCfg));
@@ -851,31 +924,14 @@ int MwInit(void) {
 		d.chan[i] = -1;
 	}
 
-	// If default IP configuration saved, apply it
-	// NOTE: IP configuration can only be set in user_init() context.
-	tmp = (uint8_t) cfg.defaultAp;
-	SetIpCfg(tmp);
-
 	// Create system queue
 	if (!(d.q = xQueueCreate(MW_FSM_QUEUE_LEN, sizeof(MwFsmMsg)))) {
 		LOGE("could not create system queue!");
 		goto err;
 	};
 
-	tcpip_adapter_init();
-	err = esp_event_loop_init(event_handler, d.q);
-	if (err) {
-		LOGE("failed to initialize event loop: %d", err);
-		goto err;
-	}
-	// Configure and start WiFi interface
-	err = esp_wifi_init(&wifi_cfg);
-	if (err) {
-		LOGE("wifi init failed: %s", esp_err_to_name(err));
-		goto err;
-	}
-	esp_wifi_set_storage(WIFI_STORAGE_RAM);
-	esp_wifi_set_mode(WIFI_MODE_STA);
+	// Init WiFi subsystem
+	wifi_init();
 
   	// Create FSM task
 	if (pdPASS != xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
@@ -894,7 +950,6 @@ int MwInit(void) {
 	sntp_setoperatingmode(SNTP_OPMODE_POLL);
 	sntp_set_config();
 	sntp_init();
-	sntp_set_time_sync_notification_cb(megawifi_set_time);
 	// Initialize LSD layer (will create receive task among other stuff).
 	LsdInit(d.q);
 	LsdChEnable(MW_CTRL_CH);
@@ -982,9 +1037,6 @@ static void sntp_config_set(const char *data, uint16_t len, MwCmd *reply)
 	memcpy(cfg.ntpPool, data, len);
 	memset(cfg.ntpPool + len, 0, MW_NTP_POOL_MAXLEN - len);
 	cfg.ntpPoolLen = len;
-	if (MwNvCfgSave() < 0) {
-		goto err_out;
-	}
 
 	sntp_set_config();
 
@@ -1012,12 +1064,95 @@ static void parse_server_url_set(const char *url, MwCmd *reply)
 		reply->cmd = htons(MW_CMD_ERROR);
 	} else {
 		memcpy(cfg.serverUrl, url, len);
-		if (MwNvCfgSave() < 0) {
-			reply->cmd = htons(MW_CMD_ERROR);
-		} else {
-			reply->datalen = htons(len);
+	}
+}
+
+#define FILL_REP_FROM_CFG(param) do { \
+	reply->wifi_adv_cfg.param = cfg.wifi.param; \
+} while (0)
+static int parse_wifi_adv_get(MwCmd *reply)
+{
+	size_t len = sizeof(struct mw_wifi_adv_cfg);
+
+	wifi_cfg_log();
+	FILL_REP_FROM_CFG(ampdu_rx_enable);
+	FILL_REP_FROM_CFG(amsdu_rx_enable);
+	FILL_REP_FROM_CFG(left_continuous_rx_buf_num);
+	FILL_REP_FROM_CFG(qos_enable);
+	FILL_REP_FROM_CFG(rx_ampdu_buf_len);
+	FILL_REP_FROM_CFG(rx_ampdu_buf_num);
+	FILL_REP_FROM_CFG(rx_ba_win);
+	FILL_REP_FROM_CFG(rx_buf_len);
+	FILL_REP_FROM_CFG(rx_buf_num);
+	FILL_REP_FROM_CFG(rx_max_single_pkt_len);
+	FILL_REP_FROM_CFG(rx_pkt_num);
+	FILL_REP_FROM_CFG(tx_buf_num);
+
+	reply->wifi_adv_cfg.rx_max_single_pkt_len =
+		htonl(reply->wifi_adv_cfg.rx_max_single_pkt_len);
+	reply->wifi_adv_cfg.rx_buf_len = htonl(reply->wifi_adv_cfg.rx_buf_len);
+	reply->wifi_adv_cfg.rx_ampdu_buf_len =
+		htonl(reply->wifi_adv_cfg.rx_ampdu_buf_len);
+
+	reply->datalen = htons(len);
+
+	return len;
+}
+
+#define THRESHOLD_MAX_CHECK(val, max) if (wifi->val > (max)) { \
+	LOGE(#val " check failed: %d < %d", wifi->val, max); \
+	goto err; \
+}
+
+#define THRESHOLD_MAX_MIN_CHECK(val, min, max) if (wifi->val < (min) || wifi->val > (max)) { \
+	LOGE(#val " check failed: %d [%d,%d]", wifi->val, min, max); \
+	goto err; \
+}
+
+#define FILL_CFG_FROM_REQ(param) do { \
+	cfg.wifi.param = wifi->param; \
+} while (0)
+
+// Changes required to be saved and a reboot to be effective
+static void parse_wifi_adv_set(struct mw_wifi_adv_cfg *wifi, MwCmd *reply)
+{
+	wifi->rx_max_single_pkt_len = ntohl(wifi->rx_max_single_pkt_len);
+	wifi->rx_buf_len = ntohl(wifi->rx_buf_len);
+	wifi->rx_ampdu_buf_len = ntohl(wifi->rx_ampdu_buf_len);
+
+	THRESHOLD_MAX_CHECK(left_continuous_rx_buf_num, 16);
+	THRESHOLD_MAX_CHECK(rx_ba_win, 16);
+	THRESHOLD_MAX_MIN_CHECK(rx_buf_num, 14, 28);
+	THRESHOLD_MAX_MIN_CHECK(rx_pkt_num, 4, 16);
+	THRESHOLD_MAX_MIN_CHECK(tx_buf_num, 4, 16);
+
+	if (!wifi->ampdu_rx_enable) {
+		if (wifi->rx_ba_win) {
+			LOGE("rx_ba_win %d not allowed with AMPDU", wifi->rx_ba_win);
+			goto err;
 		}
 	}
+
+	// Checks passed, copy configuration
+	FILL_CFG_FROM_REQ(ampdu_rx_enable);
+	FILL_CFG_FROM_REQ(amsdu_rx_enable);
+	FILL_CFG_FROM_REQ(left_continuous_rx_buf_num);
+	FILL_CFG_FROM_REQ(qos_enable);
+	FILL_CFG_FROM_REQ(rx_ampdu_buf_len);
+	FILL_CFG_FROM_REQ(rx_ampdu_buf_num);
+	FILL_CFG_FROM_REQ(rx_ba_win);
+	FILL_CFG_FROM_REQ(rx_buf_len);
+	FILL_CFG_FROM_REQ(rx_buf_num);
+	FILL_CFG_FROM_REQ(rx_max_single_pkt_len);
+	FILL_CFG_FROM_REQ(rx_pkt_num);
+	FILL_CFG_FROM_REQ(tx_buf_num);
+
+	wifi_cfg_log();
+
+	return;
+
+err:
+	reply->cmd = htons(MW_CMD_ERROR);
 }
 
 static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
@@ -1042,9 +1177,6 @@ static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 			 cfg.ap[num].reserved[2] = 0;
 		LOGI("phy %d, ssid: %s, pass: %s", phy_type, ssid, pass);
 		cfg.defaultAp = num;
-		if (MwNvCfgSave() < 0) {
-			reply->cmd = htons(MW_CMD_ERROR);
-		}
 	}
 }
 
@@ -1156,9 +1288,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				cfg.dns[tmp][0] = c->ipCfg.dns1;
 				cfg.dns[tmp][1] = c->ipCfg.dns2;
 				log_ip_cfg(&c->ipCfg);
-				if (MwNvCfgSave() < 0) {
-					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1186,12 +1315,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			tmp = c->data[0];
 			if (tmp < MW_NUM_AP_CFGS) {
 				cfg.defaultAp = tmp;
-				if (MwNvCfgSave() != 0) {
-					LOGE("Failed to set default AP: %d", cfg.defaultAp);
-					reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-				} else {
-					LOGI("Set default AP: %d", cfg.defaultAp);
-				}
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1404,7 +1527,6 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				memcpy(&cfg.gamertag[c->gamertag_set.slot],
 						&c->gamertag_set.gamertag,
 						sizeof(struct mw_gamertag));
-				MwNvCfgSave();
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
@@ -1429,7 +1551,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_FACTORY_RESET:
 			MwSetDefaultCfg();
-			if (MwNvCfgSave() < 0) {
+			// Fallthrough
+
+		case MW_CMD_NV_CFG_SAVE:
+			if (mw_nv_cfg_save() < 0) {
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
@@ -1499,6 +1624,16 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_SERVER_URL_SET:
 			parse_server_url_set((char*)c->data, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_WIFI_ADV_GET:
+			replen = parse_wifi_adv_get(&reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			break;
+
+		case MW_CMD_WIFI_ADV_SET:
+			parse_wifi_adv_set(&c->wifi_adv_cfg, &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 

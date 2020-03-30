@@ -133,6 +133,23 @@ struct mw_gamertag_set_msg {
 	struct mw_gamertag gamertag;	///< Gamertag to set
 };
 
+/// Advanced WiFi configuration. Handle with care!
+struct mw_wifi_adv_cfg {
+	uint8_t qos_enable;			///< WiFi QOS feature enable flag
+	uint8_t ampdu_rx_enable;		///< WiFi AMPDU RX feature enable flag
+	uint8_t rx_ba_win;			///< WiFi Block Ack RX window size
+	uint8_t rx_ampdu_buf_num;		///< WiFi AMPDU RX buffer number
+	uint32_t rx_ampdu_buf_len;		///< WiFi AMPDU RX buffer length
+	uint32_t rx_max_single_pkt_len;		///< WiFi RX max single packet size
+	uint32_t rx_buf_len;			///< WiFi RX buffer size
+	uint8_t amsdu_rx_enable;		///< WiFi AMSDU RX feature enable flag
+	uint8_t rx_buf_num;			///< WiFi RX buffer number
+	uint8_t rx_pkt_num;			///< WiFi RX packet number
+	uint8_t left_continuous_rx_buf_num;	///< WiFi Rx left continuous rx buffer number
+	uint8_t tx_buf_num;			///< WiFi TX buffer number
+	uint8_t reserved[3];			///< Unused, set to 0
+};
+
 /** \addtogroup MwApi MwSockStat Socket status.
  *  \{ */
 typedef enum {
@@ -200,6 +217,7 @@ typedef struct {
 		MwMsgSysStat sysStat;
 		struct mw_gamertag_set_msg gamertag_set;///< Gamertag set
 		struct mw_gamertag gamertag_get;	///< Gamertag get
+		struct mw_wifi_adv_cfg wifi_adv_cfg;
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
 		uint16_t rndLen;	// Length of the random buffer to fill
