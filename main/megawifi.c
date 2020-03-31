@@ -833,8 +833,8 @@ void MwApJoin(uint8_t n) {
 }
 
 void MwSysStatFill(MwCmd *rep) {
-	rep->datalen = ByteSwapWord(sizeof(MwMsgSysStat));
-	rep->sysStat.st_flags = d.s.st_flags;
+	rep->datalen = htons(sizeof(MwMsgSysStat));
+	rep->sysStat.st_flags = htonl(d.s.st_flags);
 	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags,
 			sizeof(MwMsgSysStat));
 }
@@ -914,6 +914,7 @@ int MwInit(void) {
 	LOGI("Configured SPI length: %d", spi_flash_get_chip_size());
 	// Load configuration from flash
 	MwCfgLoad();
+	wifi_cfg_log();
 	// Set default values for global variables
 	d.s.st_flags = 0;
 	memset(&d, 0, sizeof(d));

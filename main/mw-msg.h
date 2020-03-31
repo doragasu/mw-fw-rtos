@@ -165,6 +165,7 @@ typedef enum {
 typedef union {
 	uint32_t st_flags;
 	struct {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 		MwState sys_stat:8;	///< System status
 		uint8_t online:1;	///< Module is connected to the Internet
 		uint8_t cfg_ok:1;	///< Configuration OK
@@ -172,6 +173,15 @@ typedef union {
 		uint8_t cfg:2;		///< Default network configuration
 		uint16_t reserved:3;	///< Reserved flags
 		uint16_t ch_ev:16;	///< Channel flags with the pending event
+#else
+		uint16_t ch_ev:16;	///< Channel flags with the pending event
+		uint16_t reserved:3;	///< Reserved flags
+		uint8_t cfg:2;		///< Default network configuration
+		uint8_t dt_ok:1;	///< Date and time synchronized at least once
+		uint8_t cfg_ok:1;	///< Configuration OK
+		uint8_t online:1;	///< Module is connected to the Internet
+		MwState sys_stat:8;	///< System status
+#endif
 	};
 } MwMsgSysStat;
 /** \} */
