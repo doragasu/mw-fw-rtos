@@ -42,10 +42,13 @@
 #include <esp_sleep.h>
 
 // Flash manipulation
-#include <spi_flash.h>
+#include <esp_partition.h>
 #include "flash.h"
 
+#include <esp_log.h>
+
 #include "megawifi.h"
+#include "globals.h"
 #include "net_util.h"
 #include "lsd.h"
 #include "util.h"
@@ -53,8 +56,6 @@
 #include "http.h"
 
 #define MW_SERVER_DEFAULT		"doragasu.com"
-/// Flash sector number where the configuration is stored
-#define MW_CFG_FLASH_SECT	(MW_CFG_FLASH_ADDR>>12)
 
 /// Maximum number of reassociation attempts
 #define MW_REASSOC_MAX		5
@@ -73,28 +74,6 @@ typedef enum {
 	MW_FD_ADD,			///< Add socket to the FD set
 	MW_FD_REM			///< Remove socket from the FD set
 } MwFdOps;
-
-/// Status of the HTTP command
-enum http_stat {
-	MW_HTTP_ST_IDLE = 0,
-	MW_HTTP_ST_OPEN_CONTENT_WAIT,
-	MW_HTTP_ST_FINISH_WAIT,
-	MW_HTTP_ST_FINISH_CONTENT_WAIT,
-	MW_HTTP_ST_CERT_SET,
-	MW_HTTP_ST_ERROR,
-	MW_HTTP_ST_STAT_MAX
-};
-
-struct http_data {
-	/// HTTP client handle
-	esp_http_client_handle_t h;
-	/// HTTP machine state
-	enum http_stat s;
-	/// Remaining bytes to read/write
-	int remaining;
-	/// Certificate x509 hash, used during CERT_SET
-	uint32_t hash_tmp;
-};
 
 /// Commands allowed while in IDLE state
 const static uint32_t idleCmdMask[2] = {
@@ -182,6 +161,8 @@ typedef struct {
 } MwNvCfg;
 /** \} */
 
+#define MW_CFG_SECT_LEN		MW_FLASH_SECT_ROUND(sizeof(MwNvCfg))
+
 /** \addtogroup MwApi MwData Module data needed to handle module status
  *  \todo Maybe we should add a semaphore to access data in this struct.
  *  \{ */
@@ -212,8 +193,8 @@ typedef struct {
 	uint8_t n_reassoc;
 	/// Current PHY type
 	uint8_t phy;
-	/// HTTP machine data
-	struct http_data http;
+	/// Configuration partition handle
+	const esp_partition_t *p_cfg;
 } MwData;
 /** \} */
 
@@ -225,6 +206,8 @@ static MwNvCfg cfg;
 /// Module static data
 static MwData d;
 /// Temporal data buffer for data forwarding
+/// \todo FIXME This buffer is used by MwFsmSckTsk, and by the HTTP module.
+/// Access should be synchronized, and it is not.
 static uint8_t buf[LSD_MAX_LEN];
 
 void megawifi_set_time(uint32_t sec, uint32_t us)
@@ -268,42 +251,6 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
 
 	xQueueSend(q, &msg, portMAX_DELAY);
 	return ESP_OK;
-}
-
-#define http_err_set(...)	do {	\
-	LsdChDisable(MW_HTTP_CH);	\
-	LOGE(__VA_ARGS__);		\
-	d.http.s = MW_HTTP_ST_ERROR;	\
-} while(0)
-
-static void http_data_recv(void)
-{
-	int readed;
-
-	if (d.http.s != MW_HTTP_ST_FINISH_CONTENT_WAIT) {
-		http_err_set("ignoring unexpected HTTP data on state %d",
-				d.http.s);
-		return;
-	}
-
-	while (d.http.remaining > 0) {
-		readed = esp_http_client_read(d.http.h, (char*)buf,
-				MW_MSG_MAX_BUFLEN);
-		if (-1 == readed) {
-			http_err_set("HTTP read error, %d remaining",
-					d.http.remaining);
-			return;
-		}
-		LsdSend(buf, readed, MW_HTTP_CH);
-		d.http.remaining -= readed;
-	}
-
-	if (d.http.remaining < 0) {
-		LOGW("HTTP ignoring extra %d bytes", -d.http.remaining);
-	}
-	LOGD("HTTP request complete");
-	d.http.s = MW_HTTP_ST_IDLE;
-	LsdChDisable(MW_HTTP_CH);
 }
 
 /// Prints a list of found scanned stations
@@ -738,20 +685,19 @@ static int mw_nv_cfg_save(void) {
 #ifdef _DEBUG_MSGS
 	char md5_str[33];
 	md5_to_str(cfg.md5, md5_str);
-	LOGI("Saved MD5: %s", md5_str);
+	LOGI("saved MD5: %s", md5_str);
 #endif
 	// Erase configuration sector
-	if (spi_flash_erase_sector(MW_CFG_FLASH_SECT) != ESP_OK) {
-		LOGE("Flash sector 0x%X erase failed!", MW_CFG_FLASH_SECT);
+	if (esp_partition_erase_range(d.p_cfg, 0, MW_CFG_SECT_LEN) != ESP_OK) {
+		LOGE("config flash erase failed");
 		return -1;
 	}
 	// Write configuration to flash
-	if (spi_flash_write(MW_CFG_FLASH_ADDR, &cfg,
-			sizeof(MwNvCfg)) != ESP_OK) {
-		LOGE("Flash write addr 0x%X failed!", MW_CFG_FLASH_ADDR);
+	if (esp_partition_write(d.p_cfg, 0, &cfg, sizeof(MwNvCfg)) != ESP_OK) {
+		LOGE("config flash write failed");
 		return -1;
 	}
-	LOGI("Configuration saved to flash.");
+	LOGI("configuration saved to flash.");
 	return 0;
 }
 
@@ -764,27 +710,27 @@ int MwCfgLoad(void) {
 	uint8_t md5[16];
 
 	// Load configuration from flash
-	spi_flash_read(MW_CFG_FLASH_ADDR, (uint32_t*)&cfg, sizeof(MwNvCfg));
+	esp_partition_read(d.p_cfg, 0, &cfg, sizeof(MwNvCfg));
 	// Check MD5
 	do_md5((const char*)&cfg, ((uint32_t)&cfg.md5) - 
 			((uint32_t)&cfg), md5);
 	if (!memcmp(cfg.md5, md5, 16)) {
 		// MD5 test passed, return with loaded configuration
 		d.s.cfg_ok = TRUE;
-		LOGI("Configuration loaded from flash.");
+		LOGI("configuration loaded from flash.");
 		return 0;
 	}
 #ifdef _DEBUG_MSGS
 	char md5_str[33];
 	md5_to_str(cfg.md5, md5_str);
-	LOGI("Loaded MD5:   %s", md5_str);
+	LOGI("loaded MD5:   %s", md5_str);
 	md5_to_str(md5, md5_str);
-	LOGI("Computed MD5: %s", md5_str);
+	LOGI("computed MD5: %s", md5_str);
 #endif
 
 	// MD5 did not pass, load default configuration
 	MwSetDefaultCfg();
-	LOGI("Loaded default configuration.");
+	LOGI("loaded default configuration.");
 	return 1;
 }
 
@@ -810,7 +756,7 @@ static void SetIpCfg(int slot) {
 			tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 		}
 	} else {
-		LOGI("Setting DHCP IP configuration.");
+		LOGI("setting DHCP IP configuration.");
 		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 	}
 }
@@ -835,7 +781,7 @@ void MwApJoin(uint8_t n) {
 void MwSysStatFill(MwCmd *rep) {
 	rep->datalen = htons(sizeof(MwMsgSysStat));
 	rep->sysStat.st_flags = htonl(d.s.st_flags);
-	LOGD("Stat flags: 0x%04X, len: %d", d.s.st_flags,
+	LOGD("stat flags: 0x%04X, len: %d", d.s.st_flags,
 			sizeof(MwMsgSysStat));
 }
 
@@ -900,6 +846,11 @@ static void wifi_cfg_log(void)
 	PRINT_WIFI_CFG(tx_buf_num);
 }
 
+#define PANIC(...) do { \
+	LOGE("PANIC: " __VA_ARGS__); \
+	deep_sleep(); \
+} while (0)
+
 /************************************************************************//**
  * Module initialization. Must be called in user_init() context.
  ****************************************************************************/
@@ -907,19 +858,27 @@ int MwInit(void) {
 	MwFsmMsg m;
 	int i;
 
-	if (sizeof(MwNvCfg) > MW_FLASH_SECT_LEN) {
-		LOGE("STOP: config length too big (%d)", sizeof(MwNvCfg));
-		deep_sleep();
+	memset(&d, 0, sizeof(d));
+	if (flash_init()) {
+		PANIC("could not initialize user data partition");
 	}
-	LOGI("Configured SPI length: %d", spi_flash_get_chip_size());
+	if (http_init((char*)buf)) {
+		PANIC("http module initialization failed");
+	}
+	if (!(d.p_cfg = esp_partition_find_first(MW_DATA_PART_TYPE,
+					MW_CFG_PART_SUBTYPE,
+					MW_CFG_PART_LABEL))) {
+		PANIC("config partition initialization failed");
+	}
+	if (sizeof(MwNvCfg) > d.p_cfg->size) {
+		PANIC("config length too big (%d)", sizeof(MwNvCfg));
+	}
+	LOGI("configured SPI length: %d", spi_flash_get_chip_size());
 	// Load configuration from flash
 	MwCfgLoad();
 	wifi_cfg_log();
 	// Set default values for global variables
-	d.s.st_flags = 0;
-	memset(&d, 0, sizeof(d));
 	d.phy = MW_PHY_PROTO_DEF;
-	d.s.sys_stat = MW_ST_INIT;
 	for (i = 0; i < MW_MAX_SOCK; i++) {
 		d.sock[i] = -1;
 		d.chan[i] = -1;
@@ -937,13 +896,13 @@ int MwInit(void) {
   	// Create FSM task
 	if (pdPASS != xTaskCreate(MwFsmTsk, "FSM", MW_FSM_STACK_LEN, &d.q,
 			MW_FSM_PRIO, NULL)) {
-		LOGE("Could not create Fsm task!");
+		LOGE("could not create Fsm task!");
 		goto err;
 	}
 	// Create task for receiving data from sockets
 	if (pdPASS != xTaskCreate(MwFsmSockTsk, "SCK", MW_SOCK_STACK_LEN, &d.q,
 			MW_SOCK_PRIO, NULL)) {
-		LOGE("Could not create FsmSock task!");
+		LOGE("could not create FsmSock task!");
 		goto err;
 	}
 	// Initialize SNTP
@@ -1160,7 +1119,7 @@ static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 		const char *pass, MwCmd *reply)
 {
 	if (num >= MW_NUM_AP_CFGS) {
-		LOGE("Tried to set AP for cfg %d", num);
+		LOGE("tried to set AP for cfg %d", num);
 		reply->cmd = htons(MW_CMD_ERROR);
 	} else if (phy_type != WIFI_PROTOCAL_11B &&
 			phy_type != (WIFI_PROTOCAL_11B + WIFI_PROTOCAL_11G) &&
@@ -1170,7 +1129,7 @@ static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 		reply->cmd = htons(MW_CMD_ERROR);
 	} else {
 		// Copy configuration and save it to flash
-		LOGI("Setting AP configuration %d...", num);
+		LOGI("setting AP configuration %d...", num);
 		strncpy(cfg.ap[num].ssid, ssid, MW_SSID_MAXLEN);
 		strncpy(cfg.ap[num].pass, pass, MW_PASS_MAXLEN);
 		cfg.ap[num].phy = phy_type;
@@ -1487,8 +1446,8 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 						ByteSwapDWord(MW_FACT_RESET_MAGIC))) {
 				LOGE("Wrong DEF_CFG_SET command invocation!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			} else if (spi_flash_erase_sector(MW_CFG_FLASH_SECT) !=
-					ESP_OK) {
+			} else if (esp_partition_erase_range(d.p_cfg, 0,
+						MW_CFG_SECT_LEN) != ESP_OK) {
 				LOGE("Config flash sector erase failed!");
 				reply.cmd = ByteSwapWord(MW_CMD_ERROR);
 			} else {
@@ -1599,7 +1558,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			replen = http_parse_finish(&reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			/// TODO: Thread this
-			http_data_recv();
+			http_recv();
 			break;
 
 		case MW_CMD_HTTP_CLEANUP:
@@ -1685,38 +1644,6 @@ static int MwSend(int ch, const void *data, int len) {
 	}
 }
 
-static void MwHttpWrite(const char *data, uint16_t len)
-{
-	uint16_t to_write;
-
-	LOGD("HTTP data %" PRIu16 " bytes", len);
-	// Writes should only be performed by client during the
-	// OPEN_CONTENT_WAIT or CERT_SET states
-	switch (d.http.s) {
-	case MW_HTTP_ST_OPEN_CONTENT_WAIT:
-		to_write = MIN(d.http.remaining, len);
-		esp_http_client_write(d.http.h, data, to_write);
-		d.http.remaining -= to_write;
-		if (!d.http.remaining) {
-			if (len != to_write) {
-				LOGW("ignoring %" PRIu16 " extra bytes",
-						len - to_write);
-			}
-			d.http.s = MW_HTTP_ST_FINISH_WAIT;
-		}
-		break;
-
-	case MW_HTTP_ST_CERT_SET:
-		// Save cert to allocated slot in flash
-		http_cert_flash_write(data, len);
-		break;
-
-	default:
-		LOGE("unexpected HTTP write attempt at state %d", d.http.s);
-		break;
-	}
-}
-
 // Process messages during ready stage
 void MwFsmReady(MwFsmMsg *msg) {
 	// Pointer to the message buffer (from RX line).
@@ -1748,7 +1675,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 				}
 			} else if (MW_HTTP_CH == b->ch) {
 				// Process channel using HTTP state machine
-				MwHttpWrite((char*)b->data, b->len);
+				http_send((char*)b->data, b->len);
 			} else {
 				// Forward message if channel is enabled.
 				if (b->ch < LSD_MAX_CH && d.ss[b->ch - 1]) {

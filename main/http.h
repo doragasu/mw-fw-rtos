@@ -13,6 +13,8 @@ struct http_header {
 	struct list_head _head;
 };
 
+int http_init(char *data_buf);
+
 esp_http_client_handle_t http_parse_init(const char *url,
 		http_event_handle_cb event_cb);
 
@@ -37,6 +39,10 @@ int http_parse_cert_query(MwCmd *reply);
 int http_cert_erase(void);
 
 void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len, MwCmd *reply);
+
+void http_send(const char *data, uint16_t len);
+
+void http_recv(void);
 
 #endif /*_HTTP_H_*/
 

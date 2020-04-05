@@ -80,24 +80,6 @@
 #define MW_CMD_UNKNOWN		-3
 /** \} */
 
-/// Internal flash sector length y bytes
-#define MW_FLASH_SECT_LEN		4096
-/// Base flash address for the user to read/write data. Located after
-/// the first megabyte of the module flash
-#define MW_FLASH_USER_BASE_ADDR		0x100000
-/// Base flash sector for the user to read/write data
-#define MW_FLASH_USER_BASE_SECT		(MW_FLASH_USER_BASE_ADDR>>12)
-
-/// Configuration address, stored on the last sector 4 KiB of the firmware
-/// (0xFF000)
-#define MW_CFG_FLASH_ADDR	(MW_FLASH_USER_BASE_ADDR - (MW_FLASH_SECT_LEN))
-
-/// Maximum length of a certificate in bytes
-#define MW_CERT_MAXLEN		(8 * 1024 - 2 * sizeof(uint32_t))
-/// Certificate base address, stored on the 8 KiB preceding
-/// the configuration sector (0xFD000)
-#define MW_CERT_FLASH_ADDR	(MW_CFG_FLASH_ADDR - 8 * 1024)
-
 /** \addtogroup MwApi Cmds Supported commands.
  *  \{ */
 #define MW_CMD_OK			  0	///< OK command reply
