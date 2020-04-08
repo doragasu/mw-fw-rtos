@@ -13,7 +13,9 @@
 /// Major firmware version
 #define MW_FW_VERSION_MAJOR	1
 /// Minor firmware version
-#define MW_FW_VERSION_MINOR	2
+#define MW_FW_VERSION_MINOR	3
+/// Minor firmware version
+#define MW_FW_VERSION_MICRO	0
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 
@@ -130,11 +132,14 @@
 #define MW_CMD_HTTP_OPEN		 45	///< Open HTTP request
 #define MW_CMD_HTTP_FINISH		 46	///< Finish HTTP request
 #define MW_CMD_HTTP_CLEANUP		 47	///< Clean request data
-#define MW_CMD_SERVER_URL_GET		 48	///< Get the main server URL
-#define MW_CMD_SERVER_URL_SET		 49	///< Set the main server URL
-#define MW_CMD_WIFI_ADV_GET		 50	///< Get advanced WiFi parameters
-#define MW_CMD_WIFI_ADV_SET		 51	///< Set advanced WiFi parameters
-#define MW_CMD_NV_CFG_SAVE		 52	///< Save non-volatile config
+// Reserved slot
+#define MW_CMD_SERVER_URL_GET		 49	///< Get the main server URL
+#define MW_CMD_SERVER_URL_SET		 50	///< Set the main server URL
+#define MW_CMD_WIFI_ADV_GET		 51	///< Get advanced WiFi parameters
+#define MW_CMD_WIFI_ADV_SET		 52	///< Set advanced WiFi parameters
+#define MW_CMD_NV_CFG_SAVE		 53	///< Save non-volatile config
+#define MW_CMD_UPGRADE_LIST		 54	///< Get firmware upgrade versions
+#define MW_CMD_UPGRADE_PERFORM		 55	///< Start firmware upgrade
 #define MW_CMD_ERROR			255	///< Error command reply
 /** \} */
 

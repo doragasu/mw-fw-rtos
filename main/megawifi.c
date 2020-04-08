@@ -54,6 +54,7 @@
 #include "util.h"
 #include "led.h"
 #include "http.h"
+#include "upgrade.h"
 
 #define MW_SERVER_DEFAULT		"doragasu.com"
 
@@ -123,7 +124,8 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_OPEN - 32))     | (1<<(MW_CMD_HTTP_FINISH - 32))    |
 	(1<<(MW_CMD_HTTP_CLEANUP - 32))  | (1<<(MW_CMD_SERVER_URL_GET - 32)) |
 	(1<<(MW_CMD_SERVER_URL_SET - 32))| (1<<(MW_CMD_WIFI_ADV_GET - 32))   |
-	(1<<(MW_CMD_WIFI_ADV_SET - 32))  | (1<<(MW_CMD_NV_CFG_SAVE - 32))
+	(1<<(MW_CMD_WIFI_ADV_SET - 32))  | (1<<(MW_CMD_NV_CFG_SAVE - 32))    |
+	(1<<(MW_CMD_UPGRADE_LIST - 32))  | (1<<(MW_CMD_UPGRADE_PERFORM - 32))
 };
 
 /*
@@ -195,6 +197,10 @@ typedef struct {
 	uint8_t phy;
 	/// Configuration partition handle
 	const esp_partition_t *p_cfg;
+	/// Flash chip device id
+	uint16_t flash_dev;
+	/// Flash chip manufacturer id
+	uint8_t flash_man;
 } MwData;
 /** \} */
 
@@ -218,9 +224,48 @@ void megawifi_set_time(uint32_t sec, uint32_t us)
 	LOGI("time set, %" PRIu32 " sec", sec);
 }
 
+/// Closes a socket on the specified channel
+static void MwSockClose(int ch) {
+	// Close socket, remove from file descriptor set and mark as unused
+	int idx = ch - 1;
+
+	FD_CLR(d.sock[idx], &d.fds);
+	lwip_close(d.sock[idx]);
+	// No channel associated with this socket
+	d.chan[d.sock[idx] - LWIP_SOCKET_OFFSET] = -1;
+	d.sock[idx] = -1; // No socket on this channel
+	d.ss[idx] = MW_SOCK_NONE;
+}
+
+/// Close all opened sockets
+static void close_all(void) {
+	int i;
+
+	for (i = 0; i < MW_MAX_SOCK; i++) {
+		if (d.ss[i] > 0) {
+			LOGI("Closing sock %d on ch %d", d.sock[i], i + 1);
+			MwSockClose(i + 1);
+			LsdChDisable(i + 1);
+		}
+	}
+}
+
+static void disconnect(void)
+{
+	// Close all opened sockets
+	close_all();
+	// Disconnect and switch to IDLE state
+	esp_wifi_disconnect();
+	esp_wifi_stop();
+	d.s.sys_stat = MW_ST_IDLE;
+	d.s.online = FALSE;
+	LOGI("IDLE!");
+}
+
 static void deep_sleep(void)
 {
 	LOGI("Entering deep sleep");
+	disconnect();
 	esp_deep_sleep(0);
 	// As it takes a little for the module to enter deep
 	// sleep, stay here for a while
@@ -527,19 +572,6 @@ static int MwFsmTcpBind(MwMsgBind *b) {
 	return 0;
 }
 
-/// Closes a socket on the specified channel
-static void MwSockClose(int ch) {
-	// Close socket, remove from file descriptor set and mark as unused
-	int idx = ch - 1;
-
-	FD_CLR(d.sock[idx], &d.fds);
-	lwip_close(d.sock[idx]);
-	// No channel associated with this socket
-	d.chan[d.sock[idx] - LWIP_SOCKET_OFFSET] = -1;
-	d.sock[idx] = -1; // No socket on this channel
-	d.ss[idx] = MW_SOCK_NONE;
-}
-
 static int MwUdpSet(MwMsgInAddr* addr) {
 	int err;
 	int s;
@@ -609,19 +641,6 @@ static int MwUdpSet(MwMsgInAddr* addr) {
 	d.fdMax = MAX(s, d.fdMax);
 
 	return s;
-}
-
-/// Close all opened sockets
-static void MwFsmCloseAll(void) {
-	int i;
-
-	for (i = 0; i < MW_MAX_SOCK; i++) {
-		if (d.ss[i] > 0) {
-			LOGI("Closing sock %d on ch %d", d.sock[i], i + 1);
-			MwSockClose(i + 1);
-			LsdChDisable(i + 1);
-		}
-	}
 }
 
 /// Check if a command is on a command list mask
@@ -846,6 +865,20 @@ static void wifi_cfg_log(void)
 	PRINT_WIFI_CFG(tx_buf_num);
 }
 
+// SDK function, but dunno why it is not exported
+extern uint32_t spi_flash_get_id(void);
+static void print_flash_id(void)
+{
+	uint32_t id = spi_flash_get_id();
+	char *byte = (char*)&id;
+
+	d.flash_man = byte[0];
+	d.flash_dev = (byte[1]<<8) | byte[2];
+
+	LOGI("flash manufacturer: %02X, device %04X", d.flash_man, d.flash_dev);
+	LOGI("configured SPI length: %d", spi_flash_get_chip_size());
+}
+
 #define PANIC(...) do { \
 	LOGE("PANIC: " __VA_ARGS__); \
 	deep_sleep(); \
@@ -873,7 +906,7 @@ int MwInit(void) {
 	if (sizeof(MwNvCfg) > d.p_cfg->size) {
 		PANIC("config length too big (%d)", sizeof(MwNvCfg));
 	}
-	LOGI("configured SPI length: %d", spi_flash_get_chip_size());
+	print_flash_id();
 	// Load configuration from flash
 	MwCfgLoad();
 	wifi_cfg_log();
@@ -1115,6 +1148,16 @@ err:
 	reply->cmd = htons(MW_CMD_ERROR);
 }
 
+static void parse_upgrade(const char *name, MwCmd *reply)
+{
+	esp_err_t err;
+
+	err = upgrade_firmware(cfg.serverUrl, name);
+	if (err) {
+		reply->cmd = htons(MW_CMD_ERROR);
+	}
+}
+
 static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 		const char *pass, MwCmd *reply)
 {
@@ -1166,10 +1209,11 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 				d.tim = NULL;
 			}
 			reply.cmd = MW_CMD_OK;
-			reply.datalen = ByteSwapWord(2 + sizeof(MW_FW_VARIANT) - 1);
+			reply.datalen = ByteSwapWord(3 + sizeof(MW_FW_VARIANT));
 			reply.data[0] = MW_FW_VERSION_MAJOR;
 			reply.data[1] = MW_FW_VERSION_MINOR;
-			memcpy(reply.data + 2, MW_FW_VARIANT, sizeof(MW_FW_VARIANT) - 1);
+			reply.data[2] = MW_FW_VERSION_MICRO;
+			memcpy(reply.data + 3, MW_FW_VARIANT, sizeof(MW_FW_VARIANT));
 			LsdSend((uint8_t*)&reply, ByteSwapWord(reply.datalen) +
 					MW_CMD_HEADLEN, 0);
 			break;
@@ -1300,14 +1344,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_AP_LEAVE:	// Leave access point
 			LOGI("Disconnecting from AP");
-			// Close all opened sockets
-			MwFsmCloseAll();
-			// Disconnect and switch to IDLE state
-			esp_wifi_disconnect();
-			esp_wifi_stop();
-			d.s.sys_stat = MW_ST_IDLE;
-			d.s.online = FALSE;
-			LOGI("IDLE!");
+			disconnect();
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -1426,10 +1463,10 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_FLASH_ID:
-			// FIXME Is there a way to add support?
-			LOGW("FLASH_ID unsupported on ESP8266_RTOS_SDK");
-			reply.cmd = ByteSwapWord(MW_CMD_ERROR);
-			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			reply.flash_id.device = htons(d.flash_dev);
+			reply.flash_id.manufacturer = d.flash_man;
+			reply.datalen = htons(3);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + 3, 0);
 			break;
 
 		case MW_CMD_SYS_STAT:
@@ -1594,6 +1631,16 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 
 		case MW_CMD_WIFI_ADV_SET:
 			parse_wifi_adv_set(&c->wifi_adv_cfg, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_UPGRADE_LIST:
+			// TODO
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_UPGRADE_PERFORM:
+			parse_upgrade((char*)c->data, &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 

@@ -150,6 +150,12 @@ struct mw_wifi_adv_cfg {
 	uint8_t reserved[3];			///< Unused, set to 0
 };
 
+/// Flash chip identifiers
+struct mw_flash_id {
+	uint16_t device;
+	uint8_t manufacturer;
+};
+
 /** \addtogroup MwApi MwSockStat Socket status.
  *  \{ */
 typedef enum {
@@ -228,6 +234,7 @@ typedef struct {
 		struct mw_gamertag_set_msg gamertag_set;///< Gamertag set
 		struct mw_gamertag gamertag_get;	///< Gamertag get
 		struct mw_wifi_adv_cfg wifi_adv_cfg;
+		struct mw_flash_id flash_id;
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
 		uint16_t rndLen;	// Length of the random buffer to fill

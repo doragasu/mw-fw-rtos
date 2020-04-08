@@ -3,5 +3,5 @@ firmware
 *.vim
 .ycm_extra_conf.pyc
 .*.swp
-ones68k.bin
+ones*k.bin
 *.old
