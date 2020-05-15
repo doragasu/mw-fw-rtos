@@ -73,55 +73,26 @@
 #define HandleErrorEn(en, msg, ret)
 #endif
 
+int urlencode(char *out, const char *in);
 
-static inline void md5_to_str(const uint8_t hex[16], char str[33])
-{
-	int i, j;
-	const char digits[] = "0123456789abcdef";
+// String length must be at least (2 * bin_len + 1)
+void bin_to_str(const uint8_t *bin, unsigned bin_len, char *str);
 
-	for (i = 0, j = 0; i < 16; i++) {
-		str[j++] = digits[hex[i]>>4];
-		str[j++] = digits[hex[i] & 0xF];
-	}
+#define md5_to_str(bin, str) bin_to_str(bin, 16, str)
 
-	str[j] = '\0';
-}
+#define sha1_to_str(bin, str) bin_to_str(bin, 20, str)
 
-static inline int ipv4_to_str(uint32_t ipv4, char str[14])
-{
-	return sprintf(str, "%d.%d.%d.%d", 0xFF & ipv4, 0xFF & (ipv4>>8),
-		    0xFF & (ipv4>>16), ipv4>>24);
-}
+int ipv4_to_str(uint32_t ipv4, char str[14]);
 
 /// Similar to strcpy, but returns a pointer to the last character of the
 /// src input string (the ending '\0')
-static inline const char *StrCpySrc(char *dst, const char *src) {
-	while ('\0' != *src) *dst++ = *src++;
-	*dst = '\0';
-
-	return src;
-}
+const char *StrCpySrc(char *dst, const char *src);
 
 /// Similar to strcpy, but returns a pointer to the last character of the
 /// dst output string (the ending '\0')
-static inline char *StrCpyDst(char *dst, const char *src) {
-	while ('\0' != *src) *dst++ = *src++;
-	*dst = '\0';
+char *StrCpyDst(char *dst, const char *src);
 
-	return dst;
-}
-
-static inline int itemizer(const char *input, const char **item, int max_tokens)
-{
-	int i;
-
-	for (i = 0; i < max_tokens && *input; i++) {
-		item[i] = input;
-		input += strlen(input) + 1;
-	}
-
-	return i;
-}
+int itemizer(const char *input, const char **item, int max_tokens);
 
 #endif //_UTIL_H_
 

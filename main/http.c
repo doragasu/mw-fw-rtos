@@ -105,13 +105,16 @@ static inline int http_body_write(esp_http_client_handle_t client,
 	return esp_http_client_write(client, data, len);
 }
 
-static inline int http_finish_int(esp_http_client_handle_t client, uint32_t *data_len)
+static inline int http_finish_int(esp_http_client_handle_t client, int32_t *data_len)
 {
 	int len;
 
 	len = esp_http_client_fetch_headers(client);
 	if (ESP_FAIL == len) {
 		return ESP_FAIL;
+	}
+	if (!len && esp_http_client_is_chunked_response(client)) {
+		len = INT32_MAX;
 	}
 	if (data_len) {
 		*data_len = len;
@@ -247,10 +250,10 @@ bool http_open(uint32_t write_len)
 	return err;
 }
 
-bool http_finish(uint16_t *status, uint32_t *body_len)
+bool http_finish(uint16_t *status, int32_t *body_len)
 {
 	int status_code;
-	uint32_t len = 0;
+	int32_t len = 0;
 	bool err = false;
 
 	if ((MW_HTTP_ST_FINISH_WAIT != d.s) ||
@@ -426,15 +429,22 @@ void http_recv(void)
 	}
 
 	while (d.remaining > 0) {
-		readed = esp_http_client_read(d.h, d.buf,
-				MW_MSG_MAX_BUFLEN);
+		readed = esp_http_client_read(d.h, d.buf, MW_MSG_MAX_BUFLEN);
 		if (-1 == readed) {
 			http_err_set("HTTP read error, %d remaining",
 					d.remaining);
 			return;
+		} else if (0 == readed) {
+			LOGI("server closed the connection");
+			if (INT32_MAX == d.remaining) {
+				d.remaining = 0;
+			}
 		}
 		LsdSend((uint8_t*)d.buf, readed, MW_HTTP_CH);
-		d.remaining -= readed;
+		// Only decrement if not on chunked transfer mode
+		if (d.remaining != INT32_MAX) {
+			d.remaining -= readed;
+		}
 	}
 
 	if (d.remaining < 0) {

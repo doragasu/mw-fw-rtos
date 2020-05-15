@@ -33,7 +33,7 @@ This firmware, paired with the `mw-api` running on a Megadrive/Genesis, allows t
 * Perform HTTP/HTTPS requests.
 * Synchronize the date/time from NTP servers.
 * Generate random numbers blazingly fast.
-* Store and read custom data on non volatile flash (up to 24 megabits are available in addition to the standard 32 megabits of the cart).
+* Store and read custom data on non volatile flash (up to 16 megabits are available in addition to the standard 32 megabits of the cart).
 
 # Authors
 

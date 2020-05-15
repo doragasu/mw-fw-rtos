@@ -156,6 +156,14 @@ struct mw_flash_id {
 	uint8_t manufacturer;
 };
 
+/// Game API request
+struct mw_ga_request {
+	uint8_t method;		///< Request method
+	uint8_t num_paths;	///< Number of paths
+	uint8_t num_kv_pairs;	///< Number of key/value pairs
+	char req[];		///< Request data
+};
+
 /** \addtogroup MwApi MwSockStat Socket status.
  *  \{ */
 typedef enum {
@@ -235,6 +243,7 @@ typedef struct {
 		struct mw_gamertag gamertag_get;	///< Gamertag get
 		struct mw_wifi_adv_cfg wifi_adv_cfg;
 		struct mw_flash_id flash_id;
+		struct mw_ga_request ga_request;	///< Game API request
 		uint16_t flSect;	// Flash sector
 		uint32_t flId;		// Flash IDs
 		uint16_t rndLen;	// Length of the random buffer to fill

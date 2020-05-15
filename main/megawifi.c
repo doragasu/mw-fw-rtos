@@ -54,6 +54,7 @@
 #include "util.h"
 #include "led.h"
 #include "http.h"
+#include "game_api.h"
 #include "upgrade.h"
 
 #define MW_SERVER_DEFAULT		"doragasu.com"
@@ -97,8 +98,8 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_HDR_DEL - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32)) |
 	(1<<(MW_CMD_SERVER_URL_GET - 32)) | (1<<(MW_CMD_SERVER_URL_SET - 32)) |
 	(1<<(MW_CMD_WIFI_ADV_GET - 32))   | (1<<(MW_CMD_WIFI_ADV_SET - 32)) |
-	(1<<(MW_CMD_NV_CFG_SAVE - 32))    | (1<<(MW_CMD_GAME_SET_ENDPOINT - 32)) |
-	(1<<(MW_CMD_GAME_ADD_KEYVAL - 32))| (1<<(MW_CMD_GAME_CLEAR_KEYVAL - 32))
+	(1<<(MW_CMD_NV_CFG_SAVE - 32))    | (1<<(MW_CMD_GAME_ENDPOINT_SET - 32)) |
+	(1<<(MW_CMD_GAME_KEYVAL_ADD - 32))
 };
 
 /// Commands allowed while in READY state
@@ -127,8 +128,8 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<(MW_CMD_SERVER_URL_SET - 32))| (1<<(MW_CMD_WIFI_ADV_GET - 32))   |
 	(1<<(MW_CMD_WIFI_ADV_SET - 32))  | (1<<(MW_CMD_NV_CFG_SAVE - 32))    |
 	(1<<(MW_CMD_UPGRADE_LIST - 32))  | (1<<(MW_CMD_UPGRADE_PERFORM - 32))|
-	(1<<(MW_CMD_GAME_SET_ENDPOINT - 32))| (1<<(MW_CMD_GAME_ADD_KEYVAL - 32))|
-	(1<<(MW_CMD_GAME_CLEAR_KEYVAL - 32))| (1<<(MW_CMD_GAME_REQUEST - 32))
+	(1<<(MW_CMD_GAME_ENDPOINT_SET - 32))| (1<<(MW_CMD_GAME_KEYVAL_ADD - 32))|
+	(1<<(MW_CMD_GAME_REQUEST - 32))
 };
 
 /*
@@ -1188,7 +1189,7 @@ static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 
 static int http_parse_finish(MwCmd *reply)
 {
-	uint32_t body_len = 0;
+	int32_t body_len = 0;
 	uint16_t status = 0;
 
 	if (http_finish(&status, &body_len)) {
@@ -1201,6 +1202,50 @@ static int http_parse_finish(MwCmd *reply)
 	reply->datalen = htons(6);
 
 	return 6;
+}
+
+static void parse_game_endpoint_set(const char *data, MwCmd *reply)
+{
+	const char *token[2] = {NULL, NULL};
+
+	if (tokens_get(data, token, 2, NULL) != 2 ||
+			ga_endpoint_set(token[0], token[1])) {
+		reply->cmd = htons(MW_CMD_ERROR);
+	}
+}
+
+static int parse_game_request(struct mw_ga_request *req, MwCmd *reply)
+{
+	int32_t body_len = 0;
+	uint16_t status = 0;
+
+	status = ga_request(req->method, req->num_paths, req->num_kv_pairs,
+			req->req, &body_len);
+	if (!status) {
+		reply->cmd = htons(MW_CMD_ERROR);
+		return 0;
+	}
+
+	reply->dwData[0] = htonl(body_len);
+	reply->wData[2] = htons(status);
+	reply->datalen = htons(6);
+
+	return 6;
+}
+
+static void parse_game_add_keyval(const char *data, MwCmd *reply)
+{
+	const char *token[2];
+	const char *pos = data;
+
+	while (2 == tokens_get(pos, token, 2, NULL)) {
+		LOGD("add %s:%s", token[0], token[1]);
+		if (ga_key_value_add(token[0], token[1])) {
+			reply->cmd = htons(MW_CMD_ERROR);
+			return;
+		}
+		pos = token[1] + strlen(token[1]) + 1;
+	}
 }
 
 /// Process command requests (coming from the serial line)
@@ -1684,16 +1729,21 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
-		case MW_CMD_GAME_SET_ENDPOINT:
+		case MW_CMD_GAME_ENDPOINT_SET:
+			parse_game_endpoint_set((char*)c->data, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
-		case MW_CMD_GAME_ADD_KEYVAL:
-			break;
-
-		case MW_CMD_GAME_CLEAR_KEYVAL:
+		case MW_CMD_GAME_KEYVAL_ADD:
+			parse_game_add_keyval((char*)c->data, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_GAME_REQUEST:
+			replen = parse_game_request(&c->ga_request, &reply);
+			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
+			/// TODO: Thread this
+			http_recv();
 			break;
 
 		default:

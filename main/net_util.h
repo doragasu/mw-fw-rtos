@@ -6,6 +6,5 @@
 int net_dns_lookup(const char* addr, const char *port,
 		struct addrinfo** addr_info);
 
-
 #endif /*_NET_UTIL_H_*/
 

@@ -13,9 +13,9 @@
 /// Major firmware version
 #define MW_FW_VERSION_MAJOR	1
 /// Minor firmware version
-#define MW_FW_VERSION_MINOR	3
+#define MW_FW_VERSION_MINOR	4
 /// Minor firmware version
-#define MW_FW_VERSION_MICRO	1
+#define MW_FW_VERSION_MICRO	0
 /// Firmware variant, "std" for standard version
 #define MW_FW_VARIANT	"std"
 
@@ -140,10 +140,9 @@
 #define MW_CMD_NV_CFG_SAVE		 53	///< Save non-volatile config
 #define MW_CMD_UPGRADE_LIST		 54	///< Get firmware upgrade versions
 #define MW_CMD_UPGRADE_PERFORM		 55	///< Start firmware upgrade
-#define MW_CMD_GAME_SET_ENDPOINT	 56	///< Set game API endpoint
-#define MW_CMD_GAME_ADD_KEYVAL		 57	///< Add key/value appended to requests
-#define MW_CMD_GAME_CLEAR_KEYVAL	 58	///< Remove all added keyvals
-#define MW_CMD_GAME_REQUEST		 59	///< Perform a game API request
+#define MW_CMD_GAME_ENDPOINT_SET	 56	///< Set game API endpoint
+#define MW_CMD_GAME_KEYVAL_ADD		 57	///< Add key/value appended to requests
+#define MW_CMD_GAME_REQUEST		 58	///< Perform a game API request
 #define MW_CMD_ERROR			255	///< Error command reply
 /** \} */
 

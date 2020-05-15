@@ -20,7 +20,8 @@ bool http_header_del(const char *key);
 
 bool http_open(uint32_t write_len);
 
-bool http_finish(uint16_t *status, uint32_t *body_len);
+// *body_len is set to INT32_MAX for chunked responses
+bool http_finish(uint16_t *status, int32_t *body_len);
 
 bool http_cleanup(void);
 
