@@ -4,41 +4,33 @@
 #include <netdb.h>
 #include <stdint.h>
 #include <esp_http_client.h>
-#include "linux_list.h"
-#include "mw-msg.h"
 
-struct http_header {
-	char *key;
-	char *value;
-	struct list_head _head;
-};
+int http_module_init(char *data_buf);
 
-int http_init(char *data_buf);
-
-esp_http_client_handle_t http_parse_init(const char *url,
+esp_http_client_handle_t http_init(const char *url,
 		http_event_handle_cb event_cb);
 
-void http_parse_url_set(const char *url, MwCmd *reply);
+bool http_url_set(const char *url);
 
-void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply);
+bool http_method_set(esp_http_client_method_t method);
 
-void http_parse_header_add(const char *data, MwCmd *reply);
+bool http_header_add(const char *data);
 
-void http_parse_header_del(const char *key, MwCmd *reply);
+bool http_header_del(const char *key);
 
-void http_parse_open(uint32_t write_len, MwCmd *reply);
+bool http_open(uint32_t write_len);
 
-uint16_t http_parse_finish(MwCmd *reply);
+bool http_finish(uint16_t *status, uint32_t *body_len);
 
-void http_parse_cleanup(MwCmd *reply);
+bool http_cleanup(void);
 
 void http_cert_flash_write(const char *data, uint16_t len);
 
-int http_parse_cert_query(MwCmd *reply);
+uint32_t http_cert_query(void);
 
-int http_cert_erase(void);
+bool http_cert_erase(void);
 
-void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len, MwCmd *reply);
+bool http_cert_set(uint32_t x509_hash, uint16_t cert_len);
 
 void http_send(const char *data, uint16_t len);
 

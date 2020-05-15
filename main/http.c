@@ -40,7 +40,7 @@ static struct http_data d;
 
 #define CERT_P_PTR(type, off)	((type*)SPI_FLASH_ADDR((d.p->address + (off))))
 
-int http_init(char *data_buf)
+int http_module_init(char *data_buf)
 {
 	memset(&d, 0, sizeof(struct http_data));
 
@@ -63,35 +63,38 @@ static esp_http_client_handle_t http_init_int(const char *url, const char *cert_
 		.url = url,
 		.cert_pem = cert_pem
 	};
+	if (event_cb) {
+		config.event_handler = event_cb;
+	}
 
 	return esp_http_client_init(&config);
 }
 
-static inline int http_url_set(esp_http_client_handle_t client,
+static inline int http_url_set_int(esp_http_client_handle_t client,
 		const char *url)
 {
 	return esp_http_client_set_url(client, url);
 }
 
-static inline int http_method_set(esp_http_client_handle_t client,
+static inline int http_method_set_int(esp_http_client_handle_t client,
 		esp_http_client_method_t method)
 {
 	return esp_http_client_set_method(client, method);
 }
 
-static inline int http_header_add(esp_http_client_handle_t client,
+static inline int http_header_add_int(esp_http_client_handle_t client,
 		const char *key, const char *value)
 {
 	return esp_http_client_set_header(client, key, value);
 }
 
-static inline int http_header_del(esp_http_client_handle_t client,
+static inline int http_header_del_int(esp_http_client_handle_t client,
 		const char *key)
 {
 	return esp_http_client_delete_header(client, key);
 }
 
-static inline int http_open(esp_http_client_handle_t client, int write_len)
+static inline int http_open_int(esp_http_client_handle_t client, int write_len)
 {
 	return esp_http_client_open(client, write_len);
 }
@@ -102,7 +105,7 @@ static inline int http_body_write(esp_http_client_handle_t client,
 	return esp_http_client_write(client, data, len);
 }
 
-static inline int http_finish(esp_http_client_handle_t client, int *data_len)
+static inline int http_finish_int(esp_http_client_handle_t client, uint32_t *data_len)
 {
 	int len;
 
@@ -116,12 +119,12 @@ static inline int http_finish(esp_http_client_handle_t client, int *data_len)
 	return esp_http_client_get_status_code(client);
 }
 
-static inline int http_cleanup(esp_http_client_handle_t client)
+static inline int http_cleanup_int(esp_http_client_handle_t client)
 {
 	return esp_http_client_cleanup(client);
 }
 
-esp_http_client_handle_t http_parse_init(const char *url,
+esp_http_client_handle_t http_init(const char *url,
 		http_event_handle_cb event_cb)
 {
 	// No fancy esp_partition_mmap support, so access directly to data
@@ -139,84 +142,97 @@ esp_http_client_handle_t http_parse_init(const char *url,
 	return http_init_int(url, cert, event_cb);
 }
 
-void http_parse_url_set(const char *url, MwCmd *reply)
+bool http_url_set(const char *url)
 {
 	LOGD("set url %s", url);
 	if (!d.h) {
 		LOGD("init, HTTP URL: %s", url);
-		d.h = http_parse_init(url, NULL);
-		return;
+		d.h = http_init(url, NULL);
+		return false;
 	}
 
 	if (((MW_HTTP_ST_IDLE != d.s) && (MW_HTTP_ST_ERROR != d.s)) ||
-		http_url_set(d.h, url)) {
+		http_url_set_int(d.h, url)) {
 		LOGE("HTTP failed to set URL %s", url);
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		LOGD("HTTP URL: %s", url);
+		return true;
 	}
+	LOGD("HTTP URL: %s", url);
+
+	return false;
 }
 
-void http_parse_method_set(esp_http_client_method_t method, MwCmd *reply)
+bool http_method_set(esp_http_client_method_t method)
 {
+	bool err = 0;
+
 	LOGD("set method %d", method);
 	if (!d.h) {
-		d.h = http_parse_init("", NULL);
+		d.h = http_init("", NULL);
 	}
 
 	if (((MW_HTTP_ST_IDLE != d.s) && (MW_HTTP_ST_ERROR != d.s)) ||
-			http_method_set(d.h, method)) {
+			http_method_set_int(d.h, method)) {
 		LOGE("HTTP failed to set method %d", method);
-		reply->cmd = htons(MW_CMD_ERROR);
+		err = 1;
 	} else {
 		LOGD("HTTP method: %d", method);
 	}
+
+	return err;
 }
 
-void http_parse_header_add(const char *data, MwCmd *reply)
+bool http_header_add(const char *data)
 {
 	const char *item[2] = {0};
 	int n_items;
+	bool err = 1;
 
 	if (!d.h) {
-		d.h = http_parse_init("", NULL);
+		d.h = http_init("", NULL);
 	}
 
 	if (((MW_HTTP_ST_IDLE != d.s) && (MW_HTTP_ST_ERROR != d.s))) {
-		goto err;
+		LOGE("not allowed in HTTP state %d", d.s);
+		goto out;
 	}
 
 	n_items = itemizer(data, item, 2);
 	LOGD("HTTP header: %s: %s", item[0], item[1]);
 
-	if ((n_items != 2) || http_header_add(d.h, item[0], item[1])) {
-		goto err;
+	if ((n_items != 2) || http_header_add_int(d.h, item[0], item[1])) {
+		LOGE("invalid header data");
+		goto out;
 	}
+	err = 0;
 
-	return;
-err:
-	LOGE("HTTP header add failed");
-	reply->cmd = htons(MW_CMD_ERROR);
+out:
+	return err;
 }
 
-void http_parse_header_del(const char *key, MwCmd *reply)
+bool http_header_del(const char *key)
 {
+	bool err = false;
+
 	if (((MW_HTTP_ST_IDLE != d.s) && (MW_HTTP_ST_ERROR != d.s)) ||
-		http_header_del(d.h, key)) {
+		http_header_del_int(d.h, key)) {
 		LOGE("HTTP failed to del header %s", key);
-		reply->cmd = htons(MW_CMD_ERROR);
+		err = true;
 	} else {
 		LOGD("HTTP del header: %s", key);
 	}
+
+	return err;
 }
 
-void http_parse_open(uint32_t write_len, MwCmd *reply)
+bool http_open(uint32_t write_len)
 {
+	bool err = false;
+
 	LOGD("opening ");
 	if (((MW_HTTP_ST_IDLE != d.s) && (MW_HTTP_ST_ERROR != d.s)) ||
-			http_open(d.h, write_len)) {
+			http_open_int(d.h, write_len)) {
 		LOGE("HTTP open failed");
-		reply->cmd = htons(MW_CMD_ERROR);
+		err = true;
 	} else {
 		LsdChEnable(MW_HTTP_CH);
 		LOGD("HTTP open OK, %" PRIu32 " bytes", write_len);
@@ -227,24 +243,22 @@ void http_parse_open(uint32_t write_len, MwCmd *reply)
 			d.s = MW_HTTP_ST_FINISH_WAIT;
 		}
 	}
+
+	return err;
 }
 
-uint16_t http_parse_finish(MwCmd *reply)
+bool http_finish(uint16_t *status, uint32_t *body_len)
 {
-	int status;
-	int len = 0;
-	uint16_t replen = 0;
+	int status_code;
+	uint32_t len = 0;
+	bool err = false;
 
 	if ((MW_HTTP_ST_FINISH_WAIT != d.s) ||
-			((status = http_finish(d.h, &len)) < 0)) {
+			((status_code = http_finish_int(d.h, &len)) < 0)) {
 		LOGE("HTTP finish failed");
-		reply->cmd = htons(MW_CMD_ERROR);
+		err = true;
 	} else {
-		LOGD("HTTP finish: %d: %" PRId32 " bytes", status, len);
-		reply->dwData[0] = htonl(len);
-		reply->wData[2] = htons(status);
-		reply->datalen = htons(6);
-		replen = 6;
+		LOGD("HTTP finish: %d: %" PRIu32 " bytes", status_code, len);
 		if (len) {
 			d.remaining = len;
 			d.s = MW_HTTP_ST_FINISH_CONTENT_WAIT;
@@ -252,27 +266,37 @@ uint16_t http_parse_finish(MwCmd *reply)
 			d.s = MW_HTTP_ST_IDLE;
 			LsdChDisable(MW_HTTP_CH);
 		}
+		if (status) {
+			*status = status_code;
+		}
+		if (body_len) {
+			*body_len = len;
+		}
 	}
 
-	return replen;
+	return err;
 }
 
-void http_parse_cleanup(MwCmd *reply)
+bool http_cleanup(void)
 {
 	d.s = MW_HTTP_ST_IDLE;
+	bool err = false;
 
 	if (!d.h) {
-		return;
+		goto out;
 	}
 
 	LsdChDisable(MW_HTTP_CH);
-	if (http_cleanup(d.h)) {
+	if (http_cleanup_int(d.h)) {
 		LOGE("HTTP cleanup failed");
-		reply->cmd = htons(MW_CMD_ERROR);
+		err = true;
 	} else {
 		LOGD("HTTP cleanup OK");
 	}
 	d.h = NULL;
+
+out:
+	return err;
 }
 
 void http_cert_flash_write(const char *data, uint16_t len)
@@ -316,59 +340,47 @@ void http_cert_flash_write(const char *data, uint16_t len)
 	}
 }
 
-int http_parse_cert_query(MwCmd *reply)
+uint32_t http_cert_query(void)
 {
 	uint32_t cert = 0xFFFFFFFF;
-	int replen = 0;
-	esp_err_t err;
 
-	err = esp_partition_read(d.p, 0, &cert, sizeof(uint32_t));
-
+	esp_partition_read(d.p, 0, &cert, sizeof(uint32_t));
 	LOGD("cert hash: %08x", cert);
-	if (err || 0xFFFFFFFF == cert) {
-		replen = 0;
-		reply->cmd = htons(MW_CMD_ERROR);
-	} else {
-		replen = 4;
-		reply->dwData[0] = htonl(cert);
-	}
 
-	return replen;
+	return cert;
 }
 
-int http_cert_erase(void)
+bool http_cert_erase(void)
 {
 	return esp_partition_erase_range(d.p, 0, d.p->size);
 }
 
-void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len, MwCmd *reply)
+bool http_cert_set(uint32_t x509_hash, uint16_t cert_len)
 {
-	int err = FALSE;
+	bool err = true;
 	uint32_t  installed = *CERT_P_PTR(uint32_t, CERT_HASH_OFF);
 
 	if (d.s != MW_HTTP_ST_IDLE && d.s != MW_HTTP_ST_ERROR) {
 		LOGE("not allowed in HTTP state %d", d.s);
-		goto err_out;
+		goto out;
 	}
 	// Check if erase request
 	if (installed != 0xFFFFFFFF && !cert_len) {
 		LOGD("erasing cert as per request");
 		// Erase cert
 		err = http_cert_erase();
-		if (err) {
-			goto err_out;
-		} else {
-			goto ok_out;
-		}
+		goto out;
 	}
 	if (x509_hash == installed) {
 		LOGW("cert %08x is already installed", x509_hash);
+		err = false;
+		goto out;
 	}
 	if (cert_len > MW_CERT_MAXLEN) {
 		LOGE("cert is %d bytes, maximum allowed is "
 				STR(MW_CERT_MAXLEN) " bytes",
 				cert_len);
-		goto err_out;
+		goto out;
 	}
 	// Erase the required sectors (round up the division between sect len)
 	LOGD("erasing previous cert");
@@ -383,7 +395,7 @@ void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len, MwCmd *reply)
 	}
 	if (err) {
 		LOGE("failed to erase certificate store");
-		goto err_out;
+		goto out;
 	}
 
 	LOGI("waiting certificate data");
@@ -393,12 +405,8 @@ void http_parse_cert_set(uint32_t x509_hash, uint16_t cert_len, MwCmd *reply)
 	d.s = MW_HTTP_ST_CERT_SET;
 	d.remaining = cert_len;
 
-ok_out:
-	// Everything OK
-	return;
-
-err_out:
-	reply->cmd = htons(MW_CMD_ERROR);
+out:
+	return err;
 }
 
 #define http_err_set(...)	do {	\

@@ -34,6 +34,11 @@ import ycm_core
 # These are the compilation flags that will be used in case there's no
 # compilation database set (by default, one is not set).
 # CHANGE THIS LIST OF FLAGS. YES, THIS IS THE DROID YOU HAVE BEEN LOOKING FOR.
+#
+#    '-Wno-error=unused-but-set-variable',
+#    '-Wno-error=unused-variable',
+#    '-Wno-unused-parameter',
+
 idf_path = os.environ['IDF_PATH']
 prj_path = os.environ['PWD']
 flags = [
@@ -43,11 +48,8 @@ flags = [
     '-fstrict-volatile-bitfields',
     '-Wall',
     '-Wno-error=unused-function',
-    '-Wno-error=unused-but-set-variable',
-    '-Wno-error=unused-variable',
     '-Wno-error=deprecated-declarations',
     '-Wextra',
-    '-Wno-unused-parameter',
     '-Wno-sign-compare',
     '-Wno-old-style-declaration',
     '-D_CLOCKS_PER_SEC_=CONFIG_FREERTOS_HZ',

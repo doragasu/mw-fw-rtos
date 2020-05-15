@@ -96,8 +96,9 @@ const static uint32_t idleCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_CERT_SET - 32))  | (1<<(MW_CMD_HTTP_HDR_ADD - 32)) |
 	(1<<(MW_CMD_HTTP_HDR_DEL - 32))   | (1<<(MW_CMD_HTTP_CLEANUP - 32)) |
 	(1<<(MW_CMD_SERVER_URL_GET - 32)) | (1<<(MW_CMD_SERVER_URL_SET - 32)) |
-	(1<<(MW_CMD_WIFI_ADV_GET - 32)) | (1<<(MW_CMD_WIFI_ADV_SET - 32)) |
-	(1<<(MW_CMD_NV_CFG_SAVE - 32))
+	(1<<(MW_CMD_WIFI_ADV_GET - 32))   | (1<<(MW_CMD_WIFI_ADV_SET - 32)) |
+	(1<<(MW_CMD_NV_CFG_SAVE - 32))    | (1<<(MW_CMD_GAME_SET_ENDPOINT - 32)) |
+	(1<<(MW_CMD_GAME_ADD_KEYVAL - 32))| (1<<(MW_CMD_GAME_CLEAR_KEYVAL - 32))
 };
 
 /// Commands allowed while in READY state
@@ -125,7 +126,9 @@ const static uint32_t readyCmdMask[2] = {
 	(1<<(MW_CMD_HTTP_CLEANUP - 32))  | (1<<(MW_CMD_SERVER_URL_GET - 32)) |
 	(1<<(MW_CMD_SERVER_URL_SET - 32))| (1<<(MW_CMD_WIFI_ADV_GET - 32))   |
 	(1<<(MW_CMD_WIFI_ADV_SET - 32))  | (1<<(MW_CMD_NV_CFG_SAVE - 32))    |
-	(1<<(MW_CMD_UPGRADE_LIST - 32))  | (1<<(MW_CMD_UPGRADE_PERFORM - 32))
+	(1<<(MW_CMD_UPGRADE_LIST - 32))  | (1<<(MW_CMD_UPGRADE_PERFORM - 32))|
+	(1<<(MW_CMD_GAME_SET_ENDPOINT - 32))| (1<<(MW_CMD_GAME_ADD_KEYVAL - 32))|
+	(1<<(MW_CMD_GAME_CLEAR_KEYVAL - 32))| (1<<(MW_CMD_GAME_REQUEST - 32))
 };
 
 /*
@@ -895,7 +898,7 @@ int MwInit(void) {
 	if (flash_init()) {
 		PANIC("could not initialize user data partition");
 	}
-	if (http_init((char*)buf)) {
+	if (http_module_init((char*)buf)) {
 		PANIC("http module initialization failed");
 	}
 	if (!(d.p_cfg = esp_partition_find_first(MW_DATA_PART_TYPE,
@@ -1181,6 +1184,23 @@ static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 		LOGI("phy %d, ssid: %s, pass: %s", phy_type, ssid, pass);
 		cfg.defaultAp = num;
 	}
+}
+
+static int http_parse_finish(MwCmd *reply)
+{
+	uint32_t body_len = 0;
+	uint16_t status = 0;
+
+	if (http_finish(&status, &body_len)) {
+		reply->cmd = htons(MW_CMD_ERROR);
+		return 0;
+	}
+
+	reply->dwData[0] = htonl(body_len);
+	reply->wData[2] = htons(status);
+	reply->datalen = htons(6);
+
+	return 6;
 }
 
 /// Process command requests (coming from the serial line)
@@ -1567,27 +1587,37 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			vTaskDelayMs(60000);
 
 		case MW_CMD_HTTP_URL_SET:
-			http_parse_url_set((char*)c->data, &reply);
+			if (http_url_set((char*)c->data)) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_HTTP_METHOD_SET:
-			http_parse_method_set(c->data[0], &reply);
+			if (http_method_set(c->data[0])) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_HTTP_HDR_ADD:
-			http_parse_header_add((char*)c->data, &reply);
+			if (http_header_add((char*)c->data)) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_HTTP_HDR_DEL:
-			http_parse_header_del((char*)c->data, &reply);
+			if (http_header_del((char*)c->data)) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_HTTP_OPEN:
-			http_parse_open(ntohl(c->dwData[0]), &reply);
+			if (http_open(ntohl(c->dwData[0]))) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -1599,18 +1629,28 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			break;
 
 		case MW_CMD_HTTP_CLEANUP:
-			http_parse_cleanup(&reply);
+			if (http_cleanup()) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
 		case MW_CMD_HTTP_CERT_QUERY:
-			replen = http_parse_cert_query(&reply);
+			reply.dwData[0] = htonl(http_cert_query());
+			if (0xFFFFFFFF == reply.dwData[0]) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			} else {
+				replen = 4;
+				reply.datalen = htons(4);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN + replen, 0);
 			break;
 
 		case MW_CMD_HTTP_CERT_SET:
-			http_parse_cert_set(ntohl(c->dwData[0]),
-					ntohs(c->wData[2]), &reply);
+			if (http_cert_set(ntohl(c->dwData[0]),
+					ntohs(c->wData[2]))) {
+				reply.cmd = htons(MW_CMD_ERROR);
+			}
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
 			break;
 
@@ -1642,6 +1682,18 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 		case MW_CMD_UPGRADE_PERFORM:
 			parse_upgrade((char*)c->data, &reply);
 			LsdSend((uint8_t*)&reply, MW_CMD_HEADLEN, 0);
+			break;
+
+		case MW_CMD_GAME_SET_ENDPOINT:
+			break;
+
+		case MW_CMD_GAME_ADD_KEYVAL:
+			break;
+
+		case MW_CMD_GAME_CLEAR_KEYVAL:
+			break;
+
+		case MW_CMD_GAME_REQUEST:
 			break;
 
 		default:
