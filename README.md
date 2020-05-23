@@ -34,6 +34,7 @@ This firmware, paired with the `mw-api` running on a Megadrive/Genesis, allows t
 * Synchronize the date/time from NTP servers.
 * Generate random numbers blazingly fast.
 * Store and read custom data on non volatile flash (up to 16 megabits are available in addition to the standard 32 megabits of the cart).
+* Integrate with GameJolt for online scoreboards, trophies, user and friend management, cloud storage, etc.
 
 # Authors
 
