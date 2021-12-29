@@ -66,8 +66,8 @@
 #define MW_SLEEP_TIMER_MS	30000
 
 /// Default PHY protocol bitmap
-#define MW_PHY_PROTO_DEF	WIFI_PROTOCAL_11B | WIFI_PROTOCAL_11G | \
-	WIFI_PROTOCAL_11N
+#define MW_PHY_PROTO_DEF	WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | \
+	WIFI_PROTOCOL_11N
 
 /** \addtogroup MwApi MwFdOps FD set operations (add/remove)
  *  \{ */
@@ -1168,10 +1168,10 @@ static void ap_cfg_set(uint8_t num, uint8_t phy_type, const char *ssid,
 	if (num >= MW_NUM_AP_CFGS) {
 		LOGE("tried to set AP for cfg %d", num);
 		reply->cmd = htons(MW_CMD_ERROR);
-	} else if (phy_type != WIFI_PROTOCAL_11B &&
-			phy_type != (WIFI_PROTOCAL_11B + WIFI_PROTOCAL_11G) &&
-			phy_type != (WIFI_PROTOCAL_11B + WIFI_PROTOCAL_11G +
-				WIFI_PROTOCAL_11N)) {
+	} else if (phy_type != WIFI_PROTOCOL_11B &&
+			phy_type != (WIFI_PROTOCOL_11B + WIFI_PROTOCOL_11G) &&
+			phy_type != (WIFI_PROTOCOL_11B + WIFI_PROTOCOL_11G +
+				WIFI_PROTOCOL_11N)) {
 		LOGE("PHY type 0x%X not supported", phy_type);
 		reply->cmd = htons(MW_CMD_ERROR);
 	} else {
@@ -1257,7 +1257,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 	
 	// Sanity check: total Lengt - header length = data length
 	if ((totalLen - MW_CMD_HEADLEN) != len) {
-		LOGE("MwFsmCmdProc, ERROR: Length inconsistent");
+		LOGE("ERROR: Length inconsistent");
 		LOGE("totalLen=%d, dataLen=%d", totalLen, len);
 		return MW_CMD_FMT_ERROR;
 	}
