@@ -1928,6 +1928,7 @@ static void MwFsm(MwFsmMsg *msg) {
 							MW_CMD_HEADLEN, 0);
 				} else if (MW_CMD_SYS_STAT == (b->cmd.cmd>>8)) {
 					rep = (MwCmd*)msg->d;
+					rep->cmd = MW_CMD_OK;
 					MwSysStatFill(rep);
 					LOGD("%02X %02X %02X %02X", rep->data[0],
 							rep->data[1], rep->data[2], rep->data[3]);
