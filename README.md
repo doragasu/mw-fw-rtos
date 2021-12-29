@@ -4,7 +4,7 @@ Firmare for the ESP8266 WiFi module installed in MegaWiFi cartridges. This firmw
 
 # Building
 
-This firmware is based on [ESP8266\_RTOS\_SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware. Currently this project builds against `release/v3.3` branch, so make sure to check it out.
+This firmware is based on [ESP8266\_RTOS\_SDK](https://github.com/espressif/ESP8266_RTOS_SDK). Follow the SDK instructions to install the toolchain and build the firmware. Currently this project builds against `release/v3.4` branch, so make sure to check it out.
 
 To burn the built firmware, edit the following line of the `Makefile`, and make sure it points to your installation of the mdma utility:
 ```

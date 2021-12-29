@@ -33,6 +33,7 @@
 #endif
 
 // Time keeping
+#include <sntp.h>
 #include <time.h>
 
 // WiFi
@@ -220,12 +221,13 @@ static MwData d;
 /// Access should be synchronized, and it is not.
 static uint8_t buf[LSD_MAX_LEN];
 
-void megawifi_set_time(uint32_t sec, uint32_t us)
+static void time_sync_cb(struct timeval *tv)
 {
-        struct timeval tv = { .tv_sec = sec, .tv_usec = us };
-        settimeofday(&tv, NULL);
+	UNUSED_PARAM(tv);
+
 	d.s.dt_ok = TRUE;
-	LOGI("time set, %" PRIu32 " sec", sec);
+
+	LOGI("date/time set");
 }
 
 /// Closes a socket on the specified channel
@@ -895,6 +897,7 @@ int MwInit(void) {
 	MwFsmMsg m;
 	int i;
 
+	sntp_set_time_sync_notification_cb(time_sync_cb);
 	memset(&d, 0, sizeof(d));
 	if (flash_init()) {
 		PANIC("could not initialize user data partition");
@@ -1630,6 +1633,7 @@ int MwFsmCmdProc(MwCmd *c, uint16_t totalLen) {
 			// As it takes a little for the module to enter deep
 			// sleep, stay here for a while
 			vTaskDelayMs(60000);
+			// fallthrough
 
 		case MW_CMD_HTTP_URL_SET:
 			if (http_url_set((char*)c->data)) {
@@ -1849,6 +1853,7 @@ void MwFsmReady(MwFsmMsg *msg) {
 	}
 }
 
+// TODO: Refactor using the new event system
 static void ap_join_ev_handler(system_event_t *wifi)
 {
 	LOGD("WiFi event: %d", wifi->event_id);
@@ -1857,6 +1862,9 @@ static void ap_join_ev_handler(system_event_t *wifi)
 			LOGI("setting mode %x", d.phy);
 			esp_wifi_set_protocol(ESP_IF_WIFI_STA, d.phy);
 			esp_wifi_connect();
+			break;
+
+		case SYSTEM_EVENT_STA_STOP:
 			break;
 
 		case SYSTEM_EVENT_STA_GOT_IP:

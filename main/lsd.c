@@ -75,14 +75,14 @@ void LsdInit(QueueHandle_t q) {
 	// Set variables to default values
 	memset(&d, 0, sizeof(LsdData));
 	d.rxs = LSD_ST_STX_WAIT;
-	// Create semaphore used to handle receive buffers
-	d.sem = xSemaphoreCreateCounting(LSD_BUF_FRAMES, LSD_BUF_FRAMES);
-	// Create receive task
-	xTaskCreate(LsdRecvTsk, "LSDR", 1024, q, LSD_RECV_PRIO, NULL);
 	// Configure UART
 	ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &lsd_uart));
 //	ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 1, 3, 15, 13));
 	ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0));
+	// Create semaphore used to handle receive buffers
+	d.sem = xSemaphoreCreateCounting(LSD_BUF_FRAMES, LSD_BUF_FRAMES);
+	// Create receive task
+	xTaskCreate(LsdRecvTsk, "LSDR", 1024, q, LSD_RECV_PRIO, NULL);
 }
 
 /************************************************************************//**
@@ -174,7 +174,7 @@ int LsdSplitStart(uint8_t *data, uint16_t len,
 	if (!d.en[ch]) return 0;
 
 	scratch[0] = LSD_STX_ETX;
-	scratch[1] = (ch<<4) || (total>>8);
+	scratch[1] = (ch<<4) | (total>>8);
 	scratch[2] = total & 0xFF;
 	// Send STX, channel and length
 	LOGD("sending header");

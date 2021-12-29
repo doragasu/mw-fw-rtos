@@ -61,7 +61,8 @@ static esp_http_client_handle_t http_init_int(const char *url, const char *cert_
 {
 	esp_http_client_config_t config = {
 		.url = url,
-		.cert_pem = cert_pem
+		.cert_pem = cert_pem,
+		.timeout_ms = 60000	// 1 minute default timeout
 	};
 	if (event_cb) {
 		config.event_handler = event_cb;
