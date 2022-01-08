@@ -1,3 +1,7 @@
+# WARNING: THIS PROJECT HAS MOVED
+
+You can find the most recent version at the [mw-fw-rtos GitLab project page](https://gitlab.com/doragasu/mw-fw-rtos). This repository will be kept as is, and will not be updated anymore.
+
 # mw-fw-rtos
 
 Firmare for the ESP8266 WiFi module installed in MegaWiFi cartridges. This firmware talks directly to the MegaWiFi API (mw-api) running on the Genesis/MegaDrive console, allowing it to connect to WiFi access points, and to send and receive data through The Internet using standard TCP and UDP protocols. There are some additional goodies provided by the firmware, like flash read/write functions and SNTP time synchronization.
